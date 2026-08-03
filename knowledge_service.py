@@ -347,6 +347,13 @@ def _assistant_prompt(query: str, results: List[Dict[str, Any]], business_contex
 """
 
 
+def _requires_temperature_one(exc: Exception) -> bool:
+    message = str(exc).casefold()
+    return "invalid temperature" in message and (
+        "only 1 is allowed" in message or "only 1.0 is allowed" in message
+    )
+
+
 def answer_with_knowledge(
     query: str,
     course_id: Optional[str] = None,
@@ -365,21 +372,28 @@ def answer_with_knowledge(
     api_key = str(config.get("api_key") or "").strip()
     if not api_key:
         return {**search, "answer": fallback, "answer_source": "retrieval", "ai_error": None}
+    prompt = _assistant_prompt(query, results, business_context)
+    llm_options: Dict[str, Any] = {
+        "api_key": api_key,
+        "base_url": config.get("base_url", "https://api.kimi.com/coding/v1"),
+        "model": config.get("model", "kimi-coding"),
+        "temperature": float(config.get("temperature", 1.0)),
+        "reasoning_effort": config.get("reasoning_effort", "low"),
+        "system_prompt": (
+            "你是只读的拼多多运营决策助理。你的建议必须可审计、引用来源、标明不确定性，"
+            "并以真实结算利润和当前平台状态为准。"
+        ),
+        "timeout": int(config.get("timeout", 60)),
+        "max_completion_tokens": min(int(config.get("max_completion_tokens", 16384)), 8192),
+    }
     try:
-        answer = call_llm(
-            _assistant_prompt(query, results, business_context),
-            api_key=api_key,
-            base_url=config.get("base_url", "https://api.kimi.com/coding/v1"),
-            model=config.get("model", "kimi-coding"),
-            temperature=min(float(config.get("temperature", 1.0)), 0.4),
-            reasoning_effort=config.get("reasoning_effort", "low"),
-            system_prompt=(
-                "你是只读的拼多多运营决策助理。你的建议必须可审计、引用来源、标明不确定性，"
-                "并以真实结算利润和当前平台状态为准。"
-            ),
-            timeout=int(config.get("timeout", 60)),
-            max_completion_tokens=min(int(config.get("max_completion_tokens", 16384)), 8192),
-        )
+        try:
+            answer = call_llm(prompt, **llm_options)
+        except RuntimeError as exc:
+            if llm_options["temperature"] == 1.0 or not _requires_temperature_one(exc):
+                raise
+            llm_options["temperature"] = 1.0
+            answer = call_llm(prompt, **llm_options)
         return {**search, "answer": answer, "answer_source": "llm", "ai_error": None}
     except Exception as exc:
         return {

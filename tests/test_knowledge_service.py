@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 import knowledge_service
 
@@ -32,6 +33,34 @@ class KnowledgeServiceTests(unittest.TestCase):
         self.assertEqual(result["answer_source"], "retrieval")
         self.assertGreater(result["count"], 0)
         self.assertIn("参考资料", result["answer"])
+
+    @patch("knowledge_service.call_llm", return_value="AI 分析结果")
+    @patch("knowledge_service.get_config_defaults")
+    def test_assist_preserves_configured_temperature(self, mock_config, mock_call_llm):
+        mock_config.return_value = {"api_key": "test-key", "temperature": 1.0}
+
+        result = knowledge_service.answer_with_knowledge("投产低怎么调整", limit=1)
+
+        self.assertEqual(result["answer_source"], "llm")
+        self.assertEqual(mock_call_llm.call_args.kwargs["temperature"], 1.0)
+
+    @patch(
+        "knowledge_service.call_llm",
+        side_effect=[
+            RuntimeError("invalid temperature: only 1 is allowed for this model"),
+            "重试成功",
+        ],
+    )
+    @patch("knowledge_service.get_config_defaults")
+    def test_assist_retries_temperature_one_when_required(self, mock_config, mock_call_llm):
+        mock_config.return_value = {"api_key": "test-key", "temperature": 0.2}
+
+        result = knowledge_service.answer_with_knowledge("投产低怎么调整", limit=1)
+
+        self.assertEqual(result["answer"], "重试成功")
+        self.assertEqual(mock_call_llm.call_count, 2)
+        self.assertEqual(mock_call_llm.call_args_list[0].kwargs["temperature"], 0.2)
+        self.assertEqual(mock_call_llm.call_args_list[1].kwargs["temperature"], 1.0)
 
 
 if __name__ == "__main__":
