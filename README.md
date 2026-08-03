@@ -19,6 +19,7 @@
 - 🛒 **商品级 / 规格级明细**：排行、对比、趋势图、导出 CSV
 - 💰 **成本管理**：按「商家编码/SKU 编码」维护商品成本/物流成本，支持刷新编码、未映射商品绑定、导入导出、待维护导出；导航栏「成本」旁实时显示未维护数量徽标
 - 🤖 **AI 智能洞察**：统一 AI & 企微页面，支持 Kimi / OpenAI / 任意兼容 API，自动生成平台专属分析结论
+- 📚 **运营知识助手**：内置拼多多运营课程知识库，支持来源可追溯的问答与资料检索，可选结合店铺日期范围内的真实 KPI 辅助分析
 - 📲 **企业微信日报**：按店铺汇总后推送到指定机器人
 - 👥 **账号权限**：主账号 + 子账号，按四大平台分组，每平台细分为总览/导入/指标/订单/成本，AI & 企微为通用权限
 - 🚀 **自动部署**：GitHub Actions 推送 `main`/`master` 后自动构建前端并部署到服务器
@@ -90,7 +91,25 @@ npm run dev
 5. 进入「指标」查看单店详情、商品明细、规格分析
 6. 进入「成本」维护商家/SKU 编码对应的商品成本 / 物流成本；若存在未维护项，导航栏「成本」会显示红色数字徽标
 7. 进入「AI & 企微」配置 API Key、生成分析结论、配置机器人并发送日报
-8. 主账号可在「用户管理」中按平台和页面为子账号授权
+8. 进入「知识助手」检索课程资料，或选择店铺和日期范围后结合真实经营数据进行分析
+9. 主账号可在「用户管理」中按平台和页面为子账号授权
+
+---
+
+## 运营知识助手
+
+「知识助手」包含两种模式：
+
+- **知识问答**：检索课程证据并生成带来源的分析；选择拼多多店铺和日期范围后，会附带该时段的 KPI 与高消耗商品数据
+- **资料检索**：直接查找课程分块和结构化观点，可筛选课程、主题以及已验证决策
+
+仓库内的 `knowledge/data/knowledge.db.gz` 是只读部署包。API 首次访问时会自动解压到 `data/knowledge/knowledge.db`，该运行时文件不会提交到 Git。若服务器希望使用独立维护的数据库，可设置：
+
+```bash
+PDD_KNOWLEDGE_DB=/absolute/path/to/knowledge.db
+```
+
+未配置 AI API Key 时，知识问答会自动使用检索式答案；已配置时会复用「AI & 企微」中的模型配置。所有未通过决策闸门的课程观点仅作为待验证假设，不会被表述为确定操作指令，也不会自动执行改价、建券、调预算或批量建链接。
 
 ---
 
@@ -223,6 +242,7 @@ npm run dev
 - `data/stores.json`：店铺注册信息（含 platform 字段）
 - `data/users.json`：用户信息、权限、JWT 数据
 - `data/.jwt_secret`：JWT Secret 持久化文件（可被 `JWT_SECRET_KEY` 环境变量覆盖）
+- `data/knowledge/knowledge.db`：知识库运行时数据库（由压缩部署包自动生成，不提交 Git）
 
 ---
 
@@ -240,12 +260,14 @@ pdd_bi_dashboard/
 ├── cost_manager.py             # 拼多多成本管理
 ├── storage.py                  # 拼多多数据持久化
 ├── ai_analyzer.py              # 拼多多 AI 提示词
+├── knowledge_service.py        # 运营知识库检索、问答与只读运行时管理
 ├── report_builder.py / wecom.py # 拼多多企微日报
 ├── store_manager.py            # 店铺注册与权限
 ├── services.py                 # 拼多多业务服务层
 ├── generic_report_builder.py   # 抖音/天猫/微信通用日报生成器
 ├── routers/                    # FastAPI 路由
 │   ├── auth.py / users.py / stores.py / system.py
+│   ├── knowledge.py            # 运营知识助手 API
 │   ├── imports.py / orders.py / metrics.py / costs.py
 │   ├── ai.py / wecom.py / exports.py / dashboard.py
 │   ├── douyin.py / douyin_costs.py / douyin_ai.py / douyin_wecom.py
@@ -277,6 +299,8 @@ pdd_bi_dashboard/
 │   │   ├── components/
 │   │   └── api/client.ts
 │   └── package.json
+├── knowledge/data/knowledge.db.gz # 只读知识库部署包
+├── scripts/build_knowledge_bundle.py # 知识库部署包构建脚本
 ├── requirements.txt
 ├── start.bat / start.ps1       # 本地旧版 Streamlit 启动脚本
 ├── .github/workflows/deploy.yml # 自动部署

@@ -51,7 +51,7 @@ DEFAULT_SUB_PAGES = [
     "douyin_overview", "douyin_import", "douyin_metrics", "douyin_orders", "douyin_costs",
     "tmall_overview", "tmall_import", "tmall_metrics", "tmall_orders", "tmall_costs",
     "wechat_overview", "wechat_import", "wechat_metrics", "wechat_orders", "wechat_costs",
-    "ai_wecom",
+    "ai_wecom", "knowledge_assistant",
 ]
 
 
@@ -200,7 +200,7 @@ def allowed_store_names(user: dict, all_stores: List[str]) -> List[str]:
 
 def allowed_page_names(user: dict) -> List[str]:
     if user.get("role") == "master":
-        return DEFAULT_SUB_PAGES + ["ai", "wecom", "ai_wecom", "users"]
+        return DEFAULT_SUB_PAGES + ["ai", "wecom", "ai_wecom", "knowledge_assistant", "users"]
     return list(user.get("allowed_pages") or DEFAULT_SUB_PAGES)
 
 

@@ -6,6 +6,8 @@ __pycache__/
 *.pyc
 *.pyo
 data/
+!knowledge/data/
+!knowledge/data/knowledge.db.gz
 *.log
 .DS_Store
 .idea/

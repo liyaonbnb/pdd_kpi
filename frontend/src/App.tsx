@@ -20,6 +20,7 @@ import {
   Moon,
   XCircle,
   CheckCircle2,
+  BookOpenCheck,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Select } from "@/components/ui/select"
@@ -58,6 +59,7 @@ import { WechatMetricsPage } from "@/pages/wechat-metrics"
 import { WechatOrdersPage } from "@/pages/wechat-orders"
 import { WechatCostsPage } from "@/pages/wechat-costs"
 import { ChangePasswordPage } from "@/pages/change-password"
+import { KnowledgeAssistantPage } from "@/pages/knowledge-assistant"
 
 type Platform = "pdd" | "douyin" | "tmall" | "wechat"
 
@@ -74,6 +76,7 @@ const pddNavItems: NavItem[] = [
   { id: "metrics", to: "/metrics", label: "指标", icon: BarChart3 },
   { id: "orders", to: "/orders", label: "订单", icon: ShoppingCart },
   { id: "costs", to: "/costs", label: "成本", icon: Coins },
+  { id: "knowledge_assistant", to: "/knowledge", label: "知识助手", icon: BookOpenCheck },
   { id: "ai_wecom", to: "/ai-wecom", label: "AI & 企微", icon: Bot },
 ]
 
@@ -118,6 +121,7 @@ const routePageMap: { path: string; id: string }[] = [
   { path: "/metrics", id: "metrics" },
   { path: "/orders", id: "orders" },
   { path: "/costs", id: "costs" },
+  { path: "/knowledge", id: "knowledge_assistant" },
   { path: "/douyin", id: "douyin_overview" },
   { path: "/douyin/import", id: "douyin_import" },
   { path: "/douyin/metrics", id: "douyin_metrics" },
@@ -563,6 +567,7 @@ function Layout() {
             <Route path="/metrics" element={<MetricsPage />} />
             <Route path="/orders" element={<OrdersPage />} />
             <Route path="/costs" element={<CostsPage />} />
+            <Route path="/knowledge" element={<KnowledgeAssistantPage />} />
             <Route path="/ai-wecom" element={<AiWecomPage />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/douyin" element={<DouyinDashboardPage />} />

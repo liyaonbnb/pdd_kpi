@@ -87,8 +87,88 @@ export type Cost = {
   logistics_cost: number
 }
 
+export type KnowledgeStatus = {
+  available: boolean
+  schema_version?: string
+  knowledge_version?: string
+  built_at?: string
+  error?: string
+  counts: {
+    documents: number
+    chunks: number
+    claims: number
+    decisions: number
+  }
+  courses: { course_id: string; course_name: string; document_count: number }[]
+  topics: string[]
+  decision_message?: string | null
+}
+
+export type KnowledgeResult = {
+  result_type: "document_chunk" | "structured_claim"
+  id: string
+  course_id: string
+  title: string
+  section: string
+  source_path: string
+  excerpt: string
+  topics: string[]
+  risk_tags: string[]
+  source_status: string
+  decision_enabled: boolean
+  applicable_conditions?: string | null
+  excluded_conditions?: string | null
+  unproven_content?: string | null
+  timeliness_risk?: string | null
+  decision_reason?: string | null
+  score: number
+}
+
+export type KnowledgeResponse = {
+  query: string
+  decision_only: boolean
+  count: number
+  decision_count: number
+  message?: string | null
+  results: KnowledgeResult[]
+  answer?: string
+  answer_source?: "llm" | "retrieval" | "retrieval_fallback"
+  ai_error?: string | null
+  business_context?: Record<string, any> | null
+}
+
 export async function getHealth() {
   const res = await api.get("/health")
+  return res.data
+}
+
+export async function getKnowledgeStatus() {
+  const res = await api.get<KnowledgeStatus>("/knowledge/status")
+  return res.data
+}
+
+export async function searchKnowledge(payload: {
+  query: string
+  course_id?: string
+  topic?: string
+  decision_only?: boolean
+  limit?: number
+}) {
+  const res = await api.post<KnowledgeResponse>("/knowledge/search", payload)
+  return res.data
+}
+
+export async function askKnowledgeAssistant(payload: {
+  query: string
+  course_id?: string
+  topic?: string
+  limit?: number
+  use_ai?: boolean
+  store_name?: string
+  start_date?: string
+  end_date?: string
+}) {
+  const res = await api.post<KnowledgeResponse>("/knowledge/assist", payload)
   return res.data
 }
 

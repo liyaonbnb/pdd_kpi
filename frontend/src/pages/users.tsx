@@ -25,6 +25,7 @@ const pageGroups = [
       { id: "metrics", label: "指标" },
       { id: "orders", label: "订单" },
       { id: "costs", label: "成本" },
+      { id: "knowledge_assistant", label: "知识助手" },
     ],
   },
   {

@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from routers import stores, imports, orders, metrics, costs, ai, wecom, exports, auth, dashboard, users, backups, douyin, douyin_costs, douyin_ai, douyin_wecom, tmall, tmall_costs, tmall_ai, tmall_wecom, wechat, wechat_costs, system
+from routers import stores, imports, orders, metrics, costs, ai, wecom, exports, auth, dashboard, users, backups, douyin, douyin_costs, douyin_ai, douyin_wecom, tmall, tmall_costs, tmall_ai, tmall_wecom, wechat, wechat_costs, system, knowledge
 from auth import auth_middleware, init_auth, is_public_path
 
 
@@ -85,6 +85,7 @@ app.include_router(tmall_wecom.router, prefix="/api/tmall/wecom", tags=["tmall-w
 app.include_router(wechat.router, prefix="/api/wechat", tags=["wechat"])
 app.include_router(wechat_costs.router, prefix="/api/wechat/costs", tags=["wechat-costs"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
+app.include_router(knowledge.router, prefix="/api/knowledge", tags=["knowledge"])
 
 
 @app.get("/api/health")
