@@ -43,6 +43,7 @@ class KnowledgeServiceTests(unittest.TestCase):
 
         self.assertEqual(result["answer_source"], "llm")
         self.assertEqual(mock_call_llm.call_args.kwargs["temperature"], 1.0)
+        self.assertEqual(mock_call_llm.call_args.kwargs["timeout"], 180)
 
     @patch(
         "knowledge_service.call_llm",

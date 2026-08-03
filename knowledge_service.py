@@ -22,6 +22,7 @@ DEFAULT_RUNTIME_DB = ROOT / "data" / "knowledge" / "knowledge.db"
 NO_VERIFIED_KNOWLEDGE = (
     "当前知识库没有已验证的可执行观点，需要结合当前商家后台、官方规则和店铺真实数据复核。"
 )
+ASSISTANT_MIN_TIMEOUT_SECONDS = 180
 _DB_LOCK = threading.Lock()
 
 
@@ -383,7 +384,7 @@ def answer_with_knowledge(
             "你是只读的拼多多运营决策助理。你的建议必须可审计、引用来源、标明不确定性，"
             "并以真实结算利润和当前平台状态为准。"
         ),
-        "timeout": int(config.get("timeout", 60)),
+        "timeout": max(int(config.get("timeout", 60)), ASSISTANT_MIN_TIMEOUT_SECONDS),
         "max_completion_tokens": min(int(config.get("max_completion_tokens", 16384)), 8192),
     }
     try:
