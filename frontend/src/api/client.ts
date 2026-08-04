@@ -72,6 +72,42 @@ export type ImportRecord = {
   order_file: string
 }
 
+export type ImportPreview = {
+  store_name: string
+  import_date: string
+  promo_filename: string
+  order_filename: string
+  affected_dates: string[]
+  can_import: boolean
+  blockers: string[]
+  warnings: string[]
+  orders: {
+    total_rows: number
+    valid_orders: number
+    new_orders: number
+    existing_orders: number
+    migrated_orders: number
+    duplicate_order_ids: number
+    missing_order_ids: number
+    unresolved_dates: number
+  }
+}
+
+export type ImportBatch = {
+  batch_id: string
+  store_name: string
+  import_date: string
+  imported_by: string
+  created_at: string
+  status: "importing" | "imported" | "rolled_back" | "failed" | "invalidated"
+  promo_filename: string
+  order_filename: string
+  affected_dates: string[]
+  stats: ImportPreview["orders"]
+  can_rollback: boolean
+  rollback_reason: string
+}
+
 export type Kpis = Record<string, number | null>
 
 export type AnalysisData = {
@@ -206,6 +242,25 @@ export async function importData(formData: FormData) {
   const res = await api.post("/imports", formData, {
     headers: { "Content-Type": "multipart/form-data" },
   })
+  return res.data
+}
+
+export async function previewImport(formData: FormData) {
+  const res = await api.post<ImportPreview>("/imports/preview", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  })
+  return res.data
+}
+
+export async function getImportBatches(storeName?: string) {
+  const res = await api.get<ImportBatch[]>("/imports/batches", {
+    params: storeName ? { store_name: storeName } : {},
+  })
+  return res.data
+}
+
+export async function rollbackImportBatch(batchId: string) {
+  const res = await api.post(`/imports/batches/${batchId}/rollback`)
   return res.data
 }
 

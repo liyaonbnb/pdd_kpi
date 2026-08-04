@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react"
-import { Upload, File } from "lucide-react"
+import { Upload, FileCheck2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface FileDropzoneProps {
@@ -8,9 +8,17 @@ interface FileDropzoneProps {
   description?: string
   value?: File | null
   onChange: (file: File | null) => void
+  className?: string
+  compact?: boolean
 }
 
-export function FileDropzone({ accept, label, description, value, onChange }: FileDropzoneProps) {
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+export function FileDropzone({ accept, label, description, value, onChange, className, compact = false }: FileDropzoneProps) {
   const [isDragging, setIsDragging] = useState(false)
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -51,8 +59,10 @@ export function FileDropzone({ accept, label, description, value, onChange }: Fi
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       className={cn(
-        "flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 transition-colors cursor-pointer hover:bg-muted/50",
-        isDragging ? "border-primary bg-primary/5" : "border-border"
+        "group flex cursor-pointer items-center rounded-lg border border-dashed transition-colors hover:border-foreground/30 hover:bg-zinc-50",
+        compact ? "min-h-[82px] gap-3 px-4 py-3" : "min-h-[132px] flex-col justify-center gap-2 p-6 text-center",
+        isDragging ? "border-foreground/40 bg-zinc-50" : "border-zinc-300 bg-white",
+        className
       )}
     >
       <input
@@ -63,15 +73,23 @@ export function FileDropzone({ accept, label, description, value, onChange }: Fi
       />
       {value ? (
         <>
-          <File className="h-8 w-8 text-primary" />
-          <span className="text-sm font-medium text-foreground">{value.name}</span>
-          <span className="text-xs text-muted-foreground">点击或拖拽替换文件</span>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
+            <FileCheck2 className="h-4 w-4" />
+          </span>
+          <span className={cn("min-w-0", !compact && "text-center")}>
+            <span className="block truncate text-sm font-medium text-foreground">{value.name}</span>
+            <span className="block text-xs text-muted-foreground">{formatFileSize(value.size)} · 点击替换</span>
+          </span>
         </>
       ) : (
         <>
-          <Upload className="h-8 w-8 text-muted-foreground" />
-          <span className="text-sm font-medium">{label}</span>
-          {description && <span className="text-xs text-muted-foreground">{description}</span>}
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-zinc-100 text-zinc-600 transition-colors group-hover:bg-zinc-200">
+            <Upload className="h-4 w-4" />
+          </span>
+          <span className={cn("min-w-0", !compact && "text-center")}>
+            <span className="block text-sm font-medium">{label}</span>
+            {description && <span className="block text-xs text-muted-foreground">{description}</span>}
+          </span>
         </>
       )}
     </label>

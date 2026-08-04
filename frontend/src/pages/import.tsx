@@ -1,17 +1,35 @@
 import { useEffect, useState } from "react"
-import { Upload, Trash2 } from "lucide-react"
+import {
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  Clock3,
+  FileCheck2,
+  History,
+  Loader2,
+  RotateCcw,
+  ShieldAlert,
+  Trash2,
+  Upload,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { FileDropzone } from "@/components/ui/file-dropzone"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { isMaster } from "@/api/auth"
 import {
+  deleteRecord,
+  getImportBatches,
+  getRecords,
   getStores,
   importData,
-  getRecords,
-  deleteRecord,
+  previewImport,
+  rollbackImportBatch,
+  type ImportBatch,
+  type ImportPreview,
   type Store,
 } from "@/api/client"
 
@@ -24,80 +42,107 @@ function getYesterday() {
 type PlatformRecord = {
   date: string
   store_name: string
-  promo_file: string
-  order_file: string
   product_rows: number
   order_rows: number
   style_rows?: number
-  saved_at?: string
-  [key: string]: any
+}
+
+type BatchFilter = "all" | "imported" | "rolled_back" | "failed"
+
+const statusMeta: Record<ImportBatch["status"], { label: string; className: string }> = {
+  importing: { label: "导入中", className: "bg-blue-50 text-blue-700 ring-blue-200" },
+  imported: { label: "已导入", className: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+  rolled_back: { label: "已撤销", className: "bg-zinc-100 text-zinc-600 ring-zinc-200" },
+  failed: { label: "失败", className: "bg-red-50 text-red-700 ring-red-200" },
+  invalidated: { label: "已失效", className: "bg-amber-50 text-amber-700 ring-amber-200" },
+}
+
+const batchFilters: Array<{ value: BatchFilter; label: string }> = [
+  { value: "all", label: "全部" },
+  { value: "imported", label: "已导入" },
+  { value: "rolled_back", label: "已撤销" },
+  { value: "failed", label: "异常" },
+]
+
+function formatTime(value: string) {
+  if (!value) return "-"
+  return value.replace("T", " ").slice(0, 16)
+}
+
+function StatusPill({ status }: { status: ImportBatch["status"] }) {
+  const meta = statusMeta[status] || statusMeta.invalidated
+  return (
+    <span className={`inline-flex items-center rounded px-2 py-1 text-xs font-medium ring-1 ring-inset ${meta.className}`}>
+      {meta.label}
+    </span>
+  )
 }
 
 export function ImportPage() {
   const [stores, setStores] = useState<Store[]>([])
+  const [batches, setBatches] = useState<ImportBatch[]>([])
   const [records, setRecords] = useState<PlatformRecord[]>([])
   const [storeName, setStoreName] = useState("")
   const [importDate, setImportDate] = useState(getYesterday())
   const [promoFile, setPromoFile] = useState<File | null>(null)
   const [orderFile, setOrderFile] = useState<File | null>(null)
+  const [preview, setPreview] = useState<ImportPreview | null>(null)
+  const [batchFilter, setBatchFilter] = useState<BatchFilter>("all")
   const [loading, setLoading] = useState(false)
+  const [busyBatch, setBusyBatch] = useState("")
   const [message, setMessage] = useState("")
+  const master = isMaster()
 
   useEffect(() => {
     getStores("pdd").then(setStores)
-    fetchRecords()
+    void fetchHistory()
   }, [])
 
   useEffect(() => {
-    if (stores.length > 0 && !storeName) {
-      setStoreName(stores[0].name)
-    }
+    if (stores.length > 0 && !storeName) setStoreName(stores[0].name)
   }, [stores, storeName])
 
-  const fetchRecords = async () => {
-    const pddRecords = await getRecords()
-    setRecords(pddRecords)
+  const fetchHistory = async () => {
+    const [batchRows, dailyRows] = await Promise.all([
+      getImportBatches(),
+      master ? getRecords() : Promise.resolve([]),
+    ])
+    setBatches(batchRows)
+    setRecords(dailyRows)
   }
 
-  const handleImport = async () => {
+  const resetPreview = () => {
+    setPreview(null)
+    setMessage("")
+  }
+
+  const buildFormData = () => {
+    const formData = new FormData()
+    formData.append("store_name", storeName)
+    formData.append("import_date", importDate)
+    if (promoFile) formData.append("promo_file", promoFile)
+    if (orderFile) formData.append("order_file", orderFile)
+    return formData
+  }
+
+  const validateSelection = () => {
     if (!storeName) {
       setMessage("请选择店铺")
-      return
+      return false
     }
     if (!promoFile && !orderFile) {
-      setMessage("请至少上传推广数据或订单数据中的一个")
-      return
+      setMessage("请至少上传一个数据文件")
+      return false
     }
+    return true
+  }
+
+  const handlePreview = async () => {
+    if (!validateSelection()) return
     setLoading(true)
     setMessage("")
     try {
-      const formData = new FormData()
-      formData.append("store_name", storeName)
-      formData.append("import_date", importDate)
-      if (promoFile) formData.append("promo_file", promoFile)
-      if (orderFile) formData.append("order_file", orderFile)
-
-      const res = await importData(formData)
-      if (res.error) {
-        setMessage(res.error)
-        return
-      }
-      const dates = res.processed_dates || []
-      const dateInfo = dates.length > 0 ? `处理日期：${dates.join(", ")}` : ""
-      const detail = []
-      if (res.original_order_rows) {
-        detail.push(`订单 CSV 共 ${res.original_order_rows} 行`)
-      }
-      if (res.product_rows !== undefined) {
-        detail.push(`生成商品指标 ${res.product_rows} 行`)
-      }
-      if (res.order_rows !== undefined) {
-        detail.push(`累计订单 ${res.order_rows} 行`)
-      }
-      setMessage(`导入成功。${dateInfo}${detail.length ? "；" + detail.join("，") : ""}`)
-      setPromoFile(null)
-      setOrderFile(null)
-      fetchRecords()
+      setPreview(await previewImport(buildFormData()))
     } catch (err: any) {
       setMessage(err.message)
     } finally {
@@ -105,116 +150,287 @@ export function ImportPage() {
     }
   }
 
-  const handleDelete = async (storeName: string, date: string) => {
-    if (!confirm("确定删除该日数据？")) return
+  const handleImport = async () => {
+    if (!preview?.can_import || !validateSelection()) return
+    setLoading(true)
+    setMessage("")
     try {
-      await deleteRecord(storeName, date)
-      fetchRecords()
+      const res = await importData(buildFormData())
+      setMessage(`导入成功 · 批次 ${String(res.batch_id).slice(0, 8)}`)
+      setPromoFile(null)
+      setOrderFile(null)
+      setPreview(null)
+      await fetchHistory()
+    } catch (err: any) {
+      setMessage(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleRollback = async (batch: ImportBatch) => {
+    const dates = batch.affected_dates.join("、") || batch.import_date
+    if (!confirm(`撤销批次 ${batch.batch_id.slice(0, 8)}？\n将恢复 ${batch.store_name} 在 ${dates} 导入前的数据。`)) return
+    setBusyBatch(batch.batch_id)
+    setMessage("")
+    try {
+      await rollbackImportBatch(batch.batch_id)
+      setMessage(`已撤销批次 ${batch.batch_id.slice(0, 8)}`)
+      await fetchHistory()
+    } catch (err: any) {
+      setMessage(err.message)
+    } finally {
+      setBusyBatch("")
+    }
+  }
+
+  const handleDeleteDay = async (record: PlatformRecord) => {
+    const expected = `${record.store_name} ${record.date}`
+    const input = prompt(`此操作不可撤销。请输入“${expected}”确认：`)
+    if (input !== expected) return
+    setMessage("")
+    try {
+      await deleteRecord(record.store_name, record.date)
+      setMessage(`已删除 ${record.store_name} ${record.date} 的整日数据`)
+      await fetchHistory()
     } catch (err: any) {
       setMessage(err.message)
     }
   }
 
+  const filteredBatches = batches.filter((batch) => {
+    if (batchFilter === "all") return true
+    if (batchFilter === "failed") return batch.status === "failed" || batch.status === "invalidated"
+    return batch.status === batchFilter
+  })
+  const stats = preview?.orders
+  const hasFiles = Boolean(promoFile || orderFile)
+  const messageIsSuccess = message.includes("成功") || message.includes("已撤销") || message.includes("已删除")
+
   return (
-    <div className="space-y-4">
-      <h2 className="text-2xl font-bold">数据导入</h2>
+    <div className="space-y-6 pb-8">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+            <span>拼多多</span><span className="text-zinc-300">/</span><span>数据中心</span>
+          </div>
+          <h2 className="text-2xl font-semibold text-zinc-950">数据导入</h2>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Clock3 className="h-3.5 w-3.5" />
+          最近导入 {batches[0] ? formatTime(batches[0].created_at) : "暂无"}
+        </div>
+      </div>
+
       {message && (
-        <div className={`text-sm p-3 rounded-md ${message.includes("成功") ? "bg-green-100 text-green-800" : "bg-destructive/10 text-destructive"}`}>
+        <div className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm ${messageIsSuccess ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>
+          {messageIsSuccess ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertTriangle className="h-4 w-4 shrink-0" />}
           {message}
         </div>
       )}
-      <Card>
-        <CardHeader>
-          <CardTitle>导入每日数据</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>店铺</Label>
-              <Select value={storeName} onChange={(e) => setStoreName(e.target.value)}>
-                <option value="">选择店铺</option>
-                {stores.map((s) => (
-                  <option key={s.id} value={s.name}>
-                    {s.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>日期</Label>
-              <Input type="date" value={importDate} onChange={(e) => setImportDate(e.target.value)} />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>推广数据 Excel</Label>
-              <FileDropzone
-                accept=".xls,.xlsx"
-                label="点击或拖拽上传推广 Excel"
-                description="支持 .xls / .xlsx"
-                value={promoFile}
-                onChange={setPromoFile}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>订单数据 CSV</Label>
-              <FileDropzone
-                accept=".csv"
-                label="点击或拖拽上传订单 CSV"
-                description="支持 .csv"
-                value={orderFile}
-                onChange={setOrderFile}
-              />
-            </div>
-          </div>
-          <Button onClick={handleImport} disabled={loading}>
-            <Upload className="h-4 w-4 mr-1" /> {loading ? "导入中..." : "开始导入"}
-          </Button>
-        </CardContent>
-      </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>导入历史</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>日期</TableHead>
-                <TableHead>店铺</TableHead>
-                <TableHead>商品/样式/订单</TableHead>
-                <TableHead>文件名</TableHead>
-                <TableHead className="text-right">操作</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {records.map((r) => (
-                <TableRow key={`${r.store_name}-${r.date}`}>
-                  <TableCell>{r.date}</TableCell>
-                  <TableCell>{r.store_name}</TableCell>
-                  <TableCell>{`${r.product_rows} / ${r.style_rows} / ${r.order_rows}`}</TableCell>
-                  <TableCell className="text-xs max-w-xs truncate">
-                    {r.promo_file} / {r.order_file}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button variant="ghost" size="sm" onClick={() => handleDelete(r.store_name, r.date)}>
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {records.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={4} className="text-center text-muted-foreground">
-                    暂无导入记录
-                  </TableCell>
-                </TableRow>
+      <section className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
+        <div className="grid lg:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.85fr)]">
+          <div className="p-5 sm:p-6">
+            <div className="mb-5 flex items-center gap-3">
+              <span className="flex h-8 w-8 items-center justify-center rounded-md bg-zinc-950 text-white">
+                <Upload className="h-4 w-4" />
+              </span>
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-950">新建导入</h3>
+                <p className="text-xs text-muted-foreground">{storeName || "未选择店铺"} · {importDate}</p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-zinc-700">店铺</Label>
+                <Select value={storeName} onChange={(e) => { setStoreName(e.target.value); resetPreview() }}>
+                  <option value="">选择店铺</option>
+                  {stores.map((store) => <option key={store.id} value={store.name}>{store.name}</option>)}
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-zinc-700">推广数据日期</Label>
+                <Input type="date" value={importDate} onChange={(e) => { setImportDate(e.target.value); resetPreview() }} />
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-zinc-700">推广数据</Label>
+                <FileDropzone
+                  compact accept=".xls,.xlsx" label="选择推广 Excel" description="XLS / XLSX"
+                  value={promoFile} onChange={(file) => { setPromoFile(file); resetPreview() }}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-zinc-700">订单数据</Label>
+                <FileDropzone
+                  compact accept=".csv" label="选择订单 CSV" description="CSV"
+                  value={orderFile} onChange={(file) => { setOrderFile(file); resetPreview() }}
+                />
+              </div>
+            </div>
+
+            <div className="mt-5 flex items-center justify-between border-t border-zinc-100 pt-4">
+              <div className="text-xs text-muted-foreground">{hasFiles ? `${Number(Boolean(promoFile)) + Number(Boolean(orderFile))} 个文件待检查` : "尚未选择文件"}</div>
+              <Button onClick={handlePreview} disabled={loading || !hasFiles} className="min-w-[118px]">
+                {loading && !preview ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}
+                检查数据
+              </Button>
+            </div>
+          </div>
+
+          <aside className="border-t border-zinc-200 bg-zinc-50/70 p-5 sm:p-6 lg:border-l lg:border-t-0">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-zinc-950">检查摘要</h3>
+              {preview && (
+                <span className={`inline-flex items-center gap-1 text-xs font-medium ${preview.can_import ? "text-emerald-700" : "text-red-700"}`}>
+                  {preview.can_import ? <Check className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
+                  {preview.can_import ? "校验通过" : "需要处理"}
+                </span>
               )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+            </div>
+
+            {!preview ? (
+              <div className="flex min-h-[238px] flex-col items-center justify-center border-y border-dashed border-zinc-200 text-center">
+                <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-white text-zinc-400 ring-1 ring-zinc-200">
+                  <FileCheck2 className="h-4 w-4" />
+                </span>
+                <p className="text-sm font-medium text-zinc-700">尚未生成检查结果</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-zinc-200 bg-zinc-200">
+                  {[
+                    ["有效订单", stats?.valid_orders || 0, "text-zinc-950"],
+                    ["新增订单", stats?.new_orders || 0, "text-emerald-700"],
+                    ["覆盖已有", stats?.existing_orders || 0, "text-amber-700"],
+                    ["迁移日期", stats?.migrated_orders || 0, "text-blue-700"],
+                  ].map(([label, value, color]) => (
+                    <div key={String(label)} className="bg-white px-3 py-3">
+                      <div className="text-[11px] text-muted-foreground">{label}</div>
+                      <div className={`mt-0.5 text-xl font-semibold tabular-nums ${color}`}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between gap-3"><span className="text-muted-foreground">原始行数</span><span className="font-medium tabular-nums">{stats?.total_rows || 0}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-muted-foreground">影响日期</span><span className="text-right font-medium">{preview.affected_dates.join("、") || "无"}</span></div>
+                </div>
+
+                {(preview.blockers.length > 0 || preview.warnings.length > 0) && (
+                  <div className="space-y-2 border-t border-zinc-200 pt-3">
+                    {preview.blockers.map((item) => <div key={item} className="flex gap-2 text-xs leading-5 text-red-700"><ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />{item}</div>)}
+                    {preview.warnings.map((item) => <div key={item} className="flex gap-2 text-xs leading-5 text-amber-700"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{item}</div>)}
+                  </div>
+                )}
+
+                <Button onClick={handleImport} disabled={loading || !preview.can_import} className="w-full">
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  确认导入
+                </Button>
+              </div>
+            )}
+          </aside>
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-3 border-b border-zinc-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <span className="flex h-8 w-8 items-center justify-center rounded-md bg-zinc-100 text-zinc-700"><History className="h-4 w-4" /></span>
+            <div>
+              <h3 className="text-sm font-semibold text-zinc-950">导入批次</h3>
+              <p className="text-xs text-muted-foreground">共 {batches.length} 条记录</p>
+            </div>
+          </div>
+          <div className="inline-flex w-fit rounded-md bg-zinc-100 p-0.5">
+            {batchFilters.map((filter) => (
+              <button
+                key={filter.value}
+                type="button"
+                onClick={() => setBatchFilter(filter.value)}
+                className={`h-7 rounded px-2.5 text-xs font-medium transition-colors ${batchFilter === filter.value ? "bg-white text-zinc-950 shadow-sm" : "text-zinc-500 hover:text-zinc-800"}`}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <Table className="min-w-[850px]">
+          <TableHeader className="bg-zinc-50/80"><TableRow>
+            <TableHead className="pl-5">批次</TableHead><TableHead>店铺 / 文件</TableHead>
+            <TableHead className="text-right">新增</TableHead><TableHead className="text-right">覆盖</TableHead>
+            <TableHead>导入人</TableHead><TableHead>状态</TableHead><TableHead className="pr-5 text-right">操作</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            {filteredBatches.map((batch) => (
+              <TableRow key={batch.batch_id} className="hover:bg-zinc-50/70">
+                <TableCell className="pl-5">
+                  <div className="font-mono text-xs font-medium text-zinc-800">{batch.batch_id.slice(0, 8)}</div>
+                  <div className="mt-0.5 whitespace-nowrap text-[11px] text-muted-foreground">{formatTime(batch.created_at)}</div>
+                </TableCell>
+                <TableCell>
+                  <div className="text-sm font-medium text-zinc-900">{batch.store_name}</div>
+                  <div className="mt-0.5 max-w-[260px] truncate text-xs text-muted-foreground">{batch.order_filename || batch.promo_filename}</div>
+                </TableCell>
+                <TableCell className="text-right font-medium tabular-nums text-emerald-700">{batch.stats?.new_orders || 0}</TableCell>
+                <TableCell className="text-right font-medium tabular-nums text-amber-700">{batch.stats?.existing_orders || 0}</TableCell>
+                <TableCell className="text-xs text-zinc-600">{batch.imported_by || "-"}</TableCell>
+                <TableCell><StatusPill status={batch.status} /></TableCell>
+                <TableCell className="pr-5 text-right">
+                  <Button
+                    variant="ghost" size="sm" title={batch.can_rollback ? "撤销本次导入" : batch.rollback_reason}
+                    disabled={!batch.can_rollback || busyBatch === batch.batch_id}
+                    onClick={() => handleRollback(batch)}
+                    className="text-zinc-600 hover:text-zinc-950"
+                  >
+                    {busyBatch === batch.batch_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                    撤销
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+            {filteredBatches.length === 0 && (
+              <TableRow><TableCell colSpan={7} className="h-28 text-center text-sm text-muted-foreground">暂无匹配的批次记录</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </section>
+
+      {master && (
+        <details className="group overflow-hidden rounded-lg border border-zinc-200 bg-white">
+          <summary className="flex cursor-pointer list-none items-center justify-between px-5 py-4 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
+            <span className="flex items-center gap-2"><Trash2 className="h-4 w-4 text-zinc-400" />整日数据管理</span>
+            <ChevronDown className="h-4 w-4 text-zinc-400 transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="border-t border-zinc-200">
+            <Table className="min-w-[620px]">
+              <TableHeader className="bg-zinc-50/80"><TableRow>
+                <TableHead className="pl-5">日期</TableHead><TableHead>店铺</TableHead><TableHead>商品 / 样式 / 订单</TableHead><TableHead className="pr-5 text-right">操作</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {records.map((record) => (
+                  <TableRow key={`${record.store_name}-${record.date}`}>
+                    <TableCell className="pl-5 font-mono text-xs">{record.date}</TableCell><TableCell>{record.store_name}</TableCell>
+                    <TableCell className="tabular-nums text-zinc-600">{record.product_rows} / {record.style_rows || 0} / {record.order_rows}</TableCell>
+                    <TableCell className="pr-5 text-right">
+                      <Button variant="ghost" size="sm" title="删除整日数据" className="text-red-600 hover:bg-red-50 hover:text-red-700" onClick={() => handleDeleteDay(record)}>
+                        <Trash2 className="h-3.5 w-3.5" />删除整日
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {records.length === 0 && <TableRow><TableCell colSpan={4} className="h-24 text-center text-muted-foreground">暂无每日数据</TableCell></TableRow>}
+              </TableBody>
+            </Table>
+          </div>
+        </details>
+      )}
     </div>
   )
 }

@@ -4,6 +4,7 @@
 
 import io
 import datetime
+import hashlib
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -62,6 +63,16 @@ from ai_analyzer import generate_ai_report
 from api_client import test_connection
 from wecom import send_wecom_report, save_wecom_config, listen_wecom_chatid
 from report_builder import build_daily_report
+from import_batches import (
+    IMPORT_LOCK,
+    begin_batch,
+    find_duplicate_batch,
+    invalidate_store_batches,
+    list_batches,
+    restore_batch_snapshot,
+    rollback_batch,
+    update_batch,
+)
 
 
 # ---------- 内存缓存 ----------
@@ -177,6 +188,143 @@ def delete_store_service(store_id: str) -> bool:
 
 # ---------- 导入 ----------
 
+def _file_hash(content: Optional[bytes]) -> Optional[str]:
+    return hashlib.sha256(content).hexdigest() if content else None
+
+
+def preview_daily_import(
+    store_name: str,
+    import_date: datetime.date,
+    promo_bytes: Optional[bytes] = None,
+    promo_filename: Optional[str] = None,
+    order_bytes: Optional[bytes] = None,
+    order_filename: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Parse an upload without writing data and report its import risk."""
+    if not promo_bytes and not order_bytes:
+        raise ValueError("请至少上传推广数据或订单数据中的一个")
+
+    import_date_str = _date_str(import_date)
+    promo_hash = _file_hash(promo_bytes)
+    order_hash = _file_hash(order_bytes)
+    duplicate = find_duplicate_batch(store_name, promo_hash, order_hash)
+    blockers: List[str] = []
+    warnings: List[str] = []
+    affected_dates = {import_date_str} if promo_bytes else set()
+    order_stats: Dict[str, Any] = {
+        "total_rows": 0,
+        "valid_orders": 0,
+        "new_orders": 0,
+        "existing_orders": 0,
+        "migrated_orders": 0,
+        "duplicate_order_ids": 0,
+        "missing_order_ids": 0,
+        "unresolved_dates": 0,
+    }
+
+    if duplicate:
+        blockers.append(
+            f"相同文件已于 {duplicate.get('created_at', '')} 导入，批次 {duplicate.get('batch_id', '')[:8]}"
+        )
+
+    if promo_bytes:
+        promo_file = io.BytesIO(promo_bytes)
+        promo_file.name = promo_filename or "promo.xlsx"
+        promo_df, _ = read_promotion_file(promo_file)
+        if promo_df.empty:
+            blockers.append("推广文件没有可导入的数据")
+
+    if order_bytes:
+        order_file = io.BytesIO(order_bytes)
+        order_file.name = order_filename or "order.csv"
+        order_df, _ = read_order_file(order_file)
+        order_stats["total_rows"] = len(order_df)
+
+        if "order_id" not in order_df.columns:
+            order_stats["missing_order_ids"] = len(order_df)
+            blockers.append("订单文件缺少订单号列")
+        else:
+            ids = order_df["order_id"].astype("string").str.strip()
+            missing_ids = ids.isna() | ids.isin(["", "nan", "None", "<NA>"])
+            order_stats["missing_order_ids"] = int(missing_ids.sum())
+            if missing_ids.any():
+                blockers.append(f"有 {int(missing_ids.sum())} 行缺少订单号")
+
+            valid_df = order_df.loc[~missing_ids].copy()
+            valid_df["order_id"] = ids.loc[~missing_ids].astype(str)
+            duplicate_ids = int(valid_df["order_id"].duplicated().sum())
+            order_stats["duplicate_order_ids"] = duplicate_ids
+            if duplicate_ids:
+                blockers.append(f"文件内有 {duplicate_ids} 条重复订单号，请先清理文件")
+
+            parsed_dates = extract_order_dates(valid_df)
+            if "order_status" in valid_df.columns:
+                cancelled = valid_df["order_status"].astype(str).str.contains(
+                    "取消|交易关闭", na=False, regex=True
+                )
+            else:
+                cancelled = pd.Series(False, index=valid_df.index)
+            unresolved = parsed_dates.isna() & ~cancelled
+            order_stats["unresolved_dates"] = int(unresolved.sum())
+            if unresolved.any():
+                blockers.append(f"有 {int(unresolved.sum())} 条非取消订单无法识别日期")
+
+            accepted = valid_df.loc[~(parsed_dates.isna() & cancelled)].copy()
+            accepted_dates = parsed_dates.loc[accepted.index].dropna()
+            affected_dates.update(str(value) for value in accepted_dates.unique())
+            unique_ids = set(accepted["order_id"].astype(str))
+            order_stats["valid_orders"] = len(unique_ids)
+            if not unique_ids:
+                blockers.append("订单文件没有可导入的有效订单")
+
+            existing_locations: Dict[str, str] = {}
+            # The importer removes every uploaded order ID from history before
+            # dropping cancelled rows without dates, so snapshot those old dates too.
+            uploaded_ids = set(valid_df["order_id"].astype(str))
+            for existing_date in list_available_dates(store_name):
+                try:
+                    existing = load_daily_orders(existing_date, store_name)
+                except Exception:
+                    continue
+                if existing.empty or "order_id" not in existing.columns:
+                    continue
+                for order_id in existing["order_id"].astype(str):
+                    if order_id in uploaded_ids:
+                        existing_locations[order_id] = existing_date
+
+            incoming_locations = {
+                str(accepted.loc[index, "order_id"]): str(parsed_dates.loc[index])
+                for index in accepted.index
+                if pd.notna(parsed_dates.loc[index])
+            }
+            existing_ids = uploaded_ids.intersection(existing_locations)
+            migrated_ids = {
+                order_id
+                for order_id in existing_ids
+                if incoming_locations.get(order_id)
+                and incoming_locations[order_id] != existing_locations[order_id]
+            }
+            affected_dates.update(existing_locations[order_id] for order_id in existing_ids)
+            order_stats["existing_orders"] = len(existing_ids)
+            order_stats["new_orders"] = len(unique_ids - existing_ids)
+            order_stats["migrated_orders"] = len(migrated_ids)
+            if migrated_ids:
+                warnings.append(f"有 {len(migrated_ids)} 条订单将从原日期迁移")
+
+    return {
+        "store_name": store_name,
+        "import_date": import_date_str,
+        "promo_filename": promo_filename or "",
+        "order_filename": order_filename or "",
+        "promo_hash": promo_hash,
+        "order_hash": order_hash,
+        "orders": order_stats,
+        "affected_dates": sorted(affected_dates),
+        "blockers": blockers,
+        "warnings": warnings,
+        "can_import": not blockers,
+    }
+
 def _merge_orders(existing: pd.DataFrame, new: pd.DataFrame) -> pd.DataFrame:
     """按 order_id 合并新旧订单，新数据覆盖旧数据状态。"""
     if existing.empty or "order_id" not in existing.columns or "order_id" not in new.columns:
@@ -237,7 +385,7 @@ def _compute_and_save_daily(
     }
 
 
-def import_daily_data(
+def _apply_daily_import(
     store_name: str,
     import_date: datetime.date,
     promo_bytes: Optional[bytes] = None,
@@ -419,6 +567,67 @@ def import_daily_data(
         "results": results,
         "refreshed_codes": refreshed_codes.get("added", 0),
     }
+
+
+def import_daily_data(
+    store_name: str,
+    import_date: datetime.date,
+    promo_bytes: Optional[bytes] = None,
+    promo_filename: Optional[str] = None,
+    order_bytes: Optional[bytes] = None,
+    order_filename: Optional[str] = None,
+    imported_by: str = "unknown",
+) -> Dict[str, Any]:
+    preview = preview_daily_import(
+        store_name, import_date, promo_bytes, promo_filename, order_bytes, order_filename
+    )
+    if not preview["can_import"]:
+        raise ValueError("；".join(preview["blockers"]))
+
+    with IMPORT_LOCK:
+        # Recheck after acquiring the lock so concurrent imports cannot bypass duplicate detection.
+        preview = preview_daily_import(
+            store_name, import_date, promo_bytes, promo_filename, order_bytes, order_filename
+        )
+        if not preview["can_import"]:
+            raise ValueError("；".join(preview["blockers"]))
+        batch_id = begin_batch(
+            store_name=store_name,
+            import_date=_date_str(import_date),
+            imported_by=imported_by,
+            preview=preview,
+            promo_filename=promo_filename,
+            order_filename=order_filename,
+        )
+        try:
+            result = _apply_daily_import(
+                store_name, import_date, promo_bytes, promo_filename, order_bytes, order_filename
+            )
+        except Exception as exc:
+            restore_batch_snapshot(batch_id)
+            update_batch(
+                batch_id, status="failed", completed_at=datetime.datetime.now().isoformat(timespec="seconds"),
+                error=str(exc)[:500],
+            )
+            bump_data_version()
+            raise
+
+        completed_at = datetime.datetime.now().isoformat(timespec="seconds")
+        affected_dates = sorted(
+            set(preview["affected_dates"]) | set(result.get("processed_dates", []))
+        )
+        update_batch(
+            batch_id, status="imported", completed_at=completed_at,
+            affected_dates=affected_dates,
+            result={
+                "original_order_rows": result.get("original_order_rows", 0),
+                "product_rows": result.get("product_rows", 0),
+                "order_rows": result.get("order_rows", 0),
+            },
+        )
+        result["batch_id"] = batch_id
+        result["preview"] = preview
+        return result
 
 
 # ---------- 订单 ----------
@@ -916,7 +1125,53 @@ def get_records(store_name: Optional[str] = None) -> List[Dict[str, Any]]:
     return list_store_records(store_name)
 
 
-def delete_record(store_name: str, date: datetime.date) -> Dict[str, Any]:
-    delete_daily_data(store_name, _date_str(date))
+def get_import_batches(
+    store_name: Optional[str], actor: str, is_master: bool
+) -> List[Dict[str, Any]]:
+    records = list_batches(store_name)
+    latest_by_store: Dict[str, str] = {}
+    for record in records:
+        if record.get("status") == "imported" and record.get("store_name") not in latest_by_store:
+            latest_by_store[record["store_name"]] = record["batch_id"]
+
+    result = []
+    for record in records:
+        item = dict(record)
+        is_latest = latest_by_store.get(record.get("store_name")) == record.get("batch_id")
+        owns_batch = record.get("imported_by") == actor
+        item["can_rollback"] = (
+            record.get("status") == "imported"
+            and is_latest
+            and (is_master or owns_batch)
+        )
+        if record.get("status") != "imported":
+            item["rollback_reason"] = "该批次已撤销或已失效"
+        elif not is_latest:
+            item["rollback_reason"] = "只能撤销该店铺最近一次成功导入"
+        elif not is_master and not owns_batch:
+            item["rollback_reason"] = "只能撤销自己导入的批次"
+        else:
+            item["rollback_reason"] = ""
+        result.append(item)
+    return result
+
+
+def rollback_import_batch(batch_id: str, actor: str, is_master: bool) -> Dict[str, Any]:
+    record = rollback_batch(batch_id, actor, is_master)
     bump_data_version()
+    return {
+        "rolled_back": True,
+        "batch_id": batch_id,
+        "store_name": record.get("store_name"),
+        "affected_dates": record.get("affected_dates", []),
+    }
+
+
+def delete_record(
+    store_name: str, date: datetime.date, actor: str = "unknown"
+) -> Dict[str, Any]:
+    with IMPORT_LOCK:
+        delete_daily_data(store_name, _date_str(date))
+        invalidate_store_batches(store_name, actor, f"删除整日数据 {_date_str(date)}")
+        bump_data_version()
     return {"deleted": True, "store_name": store_name, "date": _date_str(date)}
