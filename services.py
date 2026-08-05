@@ -15,6 +15,7 @@ import pandas as pd
 from data_loader import read_promotion_file, read_order_file
 from data_processor import match_promotion_and_orders, filter_orders_by_date, extract_order_dates
 from metrics import (
+    safe_div,
     compute_product_metrics,
     compute_overall_kpis,
     aggregate_product_metrics,
@@ -859,6 +860,174 @@ def get_dashboard_summary(
         "kpis": summary_kpis,
         "trend": trend_summary,
     }
+
+
+OPERATIONS_DAILY_BASE_KEYS = [
+    "promo_spend",
+    "order_count",
+    "valid_order_count",
+    "valid_merchant_income",
+    "refund_count",
+    "total_product_cost",
+    "total_logistics_cost",
+    "platform_fee",
+    "link_gross_profit",
+    "profit_loss",
+]
+
+
+def _operations_kpis(totals: Dict[str, float]) -> Dict[str, float]:
+    """从可加总字段重新计算日报比率，避免直接平均百分比。"""
+    income = float(totals.get("valid_merchant_income", 0) or 0)
+    valid_orders = float(totals.get("valid_order_count", 0) or 0)
+    orders = float(totals.get("order_count", 0) or 0)
+    promo_spend = float(totals.get("promo_spend", 0) or 0)
+    product_cost = float(totals.get("total_product_cost", 0) or 0)
+    logistics_cost = float(totals.get("total_logistics_cost", 0) or 0)
+    link_profit = float(totals.get("link_gross_profit", 0) or 0)
+    operating_profit = float(totals.get("profit_loss", 0) or 0)
+
+    return {
+        **{key: float(totals.get(key, 0) or 0) for key in OPERATIONS_DAILY_BASE_KEYS},
+        "avg_valid_order_income": safe_div(income, valid_orders),
+        "promo_cost_ratio": safe_div(promo_spend, income) * 100,
+        "product_cost_ratio": safe_div(product_cost, income) * 100,
+        "logistics_cost_ratio": safe_div(logistics_cost, income) * 100,
+        "gross_margin_rate": safe_div(link_profit, income) * 100,
+        "profit_loss_rate": safe_div(operating_profit, income) * 100,
+        "refund_rate": safe_div(float(totals.get("refund_count", 0) or 0), orders) * 100,
+    }
+
+
+def _operations_data_status(store_name: str, date_str: str) -> Dict[str, Any]:
+    flags = {"metrics": False, "orders": False, "promotion": False}
+    try:
+        product_metrics, _ = load_daily_data(date_str, store_name)
+        flags["metrics"] = not product_metrics.empty
+    except Exception:
+        pass
+    try:
+        flags["orders"] = not load_daily_orders(date_str, store_name).empty
+    except Exception:
+        pass
+    try:
+        flags["promotion"] = not load_daily_promo(date_str, store_name).empty
+    except Exception:
+        pass
+
+    available = sum(1 for value in flags.values() if value)
+    status = "complete" if available == len(flags) else "partial" if available else "missing"
+    return {"status": status, **flags}
+
+
+def _sum_operations_rows(rows: List[Dict[str, Any]]) -> Dict[str, float]:
+    totals = {key: 0.0 for key in OPERATIONS_DAILY_BASE_KEYS}
+    for row in rows:
+        for key in OPERATIONS_DAILY_BASE_KEYS:
+            totals[key] += float(row.get(key, 0) or 0)
+    return totals
+
+
+@cached_with_ttl(_CACHE_TTL_SECONDS)
+def get_operations_daily_report(
+    start_date: Optional[datetime.date],
+    end_date: Optional[datetime.date],
+    store_names: List[str],
+) -> Dict[str, Any]:
+    """生成店铺 × 指标 × 日期的主账号运营日报。"""
+    available_dates = sorted({
+        date
+        for store_name in store_names
+        for date in list_available_dates(store_name)
+        if date
+    })
+
+    if end_date is None:
+        end_date = (
+            datetime.datetime.strptime(available_dates[-1], "%Y-%m-%d").date()
+            if available_dates
+            else datetime.date.today()
+        )
+    if start_date is None:
+        start_date = end_date - datetime.timedelta(days=6)
+    if start_date > end_date:
+        raise ValueError("开始日期不能晚于结束日期")
+    if (end_date - start_date).days > 30:
+        raise ValueError("运营日报单次最多查看 31 天")
+
+    date_columns = [
+        (start_date + datetime.timedelta(days=offset)).strftime("%Y-%m-%d")
+        for offset in range((end_date - start_date).days + 1)
+    ]
+    trend_rows = load_trend_data(store_names, start_date, end_date)
+    row_map = {
+        (str(row.get("store_name", "")), str(row.get("date", ""))): row
+        for row in trend_rows
+    }
+
+    stores: List[Dict[str, Any]] = []
+    all_rows: List[Dict[str, Any]] = []
+    data_issue_store_count = 0
+    missing_day_count = 0
+
+    for store_name in store_names:
+        daily: Dict[str, Optional[Dict[str, Any]]] = {}
+        quality: Dict[str, Dict[str, Any]] = {}
+        store_rows: List[Dict[str, Any]] = []
+        for date_str in date_columns:
+            raw = row_map.get((store_name, date_str))
+            daily[date_str] = _operations_kpis(_sum_operations_rows([raw])) if raw else None
+            quality[date_str] = _operations_data_status(store_name, date_str)
+            if raw:
+                store_rows.append(raw)
+
+        quality_counts = {
+            status: sum(1 for value in quality.values() if value["status"] == status)
+            for status in ("complete", "partial", "missing")
+        }
+        if quality_counts["partial"] or quality_counts["missing"]:
+            data_issue_store_count += 1
+        missing_day_count += quality_counts["missing"]
+        all_rows.extend(store_rows)
+        stores.append({
+            "store_name": store_name,
+            "totals": _operations_kpis(_sum_operations_rows(store_rows)),
+            "daily": daily,
+            "quality": quality,
+            "quality_counts": quality_counts,
+        })
+
+    summary = _operations_kpis(_sum_operations_rows(all_rows))
+    data_days = sum(1 for date_str in date_columns if any(
+        row_map.get((store_name, date_str)) for store_name in store_names
+    ))
+    summary.update({
+        "store_count": len(store_names),
+        "data_days": data_days,
+        "daily_income": safe_div(summary["valid_merchant_income"], data_days),
+        "data_issue_store_count": data_issue_store_count,
+        "missing_day_count": missing_day_count,
+    })
+
+    total_daily: Dict[str, Optional[Dict[str, Any]]] = {}
+    for date_str in date_columns:
+        date_rows = [
+            row_map[(store_name, date_str)]
+            for store_name in store_names
+            if (store_name, date_str) in row_map
+        ]
+        total_daily[date_str] = (
+            _operations_kpis(_sum_operations_rows(date_rows)) if date_rows else None
+        )
+
+    return _json_safe({
+        "start_date": start_date.strftime("%Y-%m-%d"),
+        "end_date": end_date.strftime("%Y-%m-%d"),
+        "dates": date_columns,
+        "summary": summary,
+        "total": {"store_name": "全店汇总", "totals": summary, "daily": total_daily},
+        "stores": stores,
+    })
 
 
 # ---------- 成本 ----------

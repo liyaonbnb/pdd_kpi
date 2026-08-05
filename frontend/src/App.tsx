@@ -21,6 +21,7 @@ import {
   XCircle,
   CheckCircle2,
   BookOpenCheck,
+  ClipboardList,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Select } from "@/components/ui/select"
@@ -60,6 +61,7 @@ import { WechatOrdersPage } from "@/pages/wechat-orders"
 import { WechatCostsPage } from "@/pages/wechat-costs"
 import { ChangePasswordPage } from "@/pages/change-password"
 import { KnowledgeAssistantPage } from "@/pages/knowledge-assistant"
+import { OperationsDailyPage } from "@/pages/operations-daily"
 
 type Platform = "pdd" | "douyin" | "tmall" | "wechat"
 
@@ -68,9 +70,11 @@ interface NavItem {
   to: string
   label: string
   icon: React.ComponentType<{ className?: string }>
+  masterOnly?: boolean
 }
 
 const pddNavItems: NavItem[] = [
+  { id: "operations_daily", to: "/operations-daily", label: "运营日报", icon: ClipboardList, masterOnly: true },
   { id: "overview", to: "/", label: "总览", icon: LayoutDashboard },
   { id: "import", to: "/import", label: "导入", icon: Upload },
   { id: "metrics", to: "/metrics", label: "指标", icon: BarChart3 },
@@ -115,6 +119,7 @@ const platformTabs: { key: Platform; label: string; defaultTo: string }[] = [
 ]
 
 const routePageMap: { path: string; id: string }[] = [
+  { path: "/operations-daily", id: "operations_daily" },
   { path: "/", id: "overview" },
   { path: "/stores", id: "stores" },
   { path: "/import", id: "import" },
@@ -341,7 +346,9 @@ function Sidebar({
   const [costBadge, setCostBadge] = useState<{ pending: number; unmapped: number } | null>(null)
   const navItems =
     platform === "douyin" ? douyinNavItems : platform === "tmall" ? tmallNavItems : platform === "wechat" ? wechatNavItems : pddNavItems
-  const visibleItems = navItems.filter((item) => (showMaster ? true : canAccessPage(item.id)))
+  const visibleItems = navItems.filter((item) => (
+    item.masterOnly ? showMaster : showMaster || canAccessPage(item.id)
+  ))
 
   const costPageId =
     platform === "douyin" ? "douyin_costs" : platform === "tmall" ? "tmall_costs" : platform === "wechat" ? "wechat_costs" : "costs"
@@ -521,7 +528,7 @@ function Layout() {
   // 页面级权限守卫：无权限则重定向到第一个有权限的页面
   useEffect(() => {
     const pageId = getPageIdByPath(location.pathname)
-    if (pageId && !canAccessPage(pageId)) {
+    if (pageId && ((pageId === "operations_daily" && !isMaster()) || !canAccessPage(pageId))) {
       navigate(firstAllowedFallback(), { replace: true })
     }
   }, [location.pathname])
@@ -561,6 +568,7 @@ function Layout() {
         </header>
         <div className="flex-1 p-4 md:p-6 overflow-auto">
           <Routes>
+            <Route path="/operations-daily" element={<OperationsDailyPage />} />
             <Route path="/" element={<DashboardPage />} />
             <Route path="/stores" element={<StoresPage />} />
             <Route path="/import" element={<ImportPage />} />

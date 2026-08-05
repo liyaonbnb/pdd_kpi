@@ -116,6 +116,32 @@ export type AnalysisData = {
   kpis: Kpis
 }
 
+export type OperationsDailyKpis = Record<string, number | null>
+
+export type OperationsDailyQuality = {
+  status: "complete" | "partial" | "missing"
+  metrics: boolean
+  orders: boolean
+  promotion: boolean
+}
+
+export type OperationsDailyStore = {
+  store_name: string
+  totals: OperationsDailyKpis
+  daily: Record<string, OperationsDailyKpis | null>
+  quality?: Record<string, OperationsDailyQuality>
+  quality_counts?: { complete: number; partial: number; missing: number }
+}
+
+export type OperationsDailyReport = {
+  start_date: string
+  end_date: string
+  dates: string[]
+  summary: OperationsDailyKpis
+  total: OperationsDailyStore
+  stores: OperationsDailyStore[]
+}
+
 export type Cost = {
   merchant_code: string
   product_name: string
@@ -278,6 +304,14 @@ export async function getDashboardSummary(startDate: string, endDate: string, st
   }
   const res = await api.get("/dashboard/summary", { params })
   return res.data as { store_count: number; start_date: string; end_date: string; kpis: Kpis; trend: any[] }
+}
+
+export async function getOperationsDaily(startDate?: string, endDate?: string) {
+  const params: Record<string, string> = {}
+  if (startDate) params.start_date = startDate
+  if (endDate) params.end_date = endDate
+  const res = await api.get<OperationsDailyReport>("/dashboard/operations-daily", { params })
+  return res.data
 }
 
 export async function deleteRecord(storeName: string, date: string) {
