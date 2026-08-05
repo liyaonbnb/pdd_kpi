@@ -1,8 +1,9 @@
-import { Fragment, useEffect, useMemo, useState } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import {
   AlertTriangle,
   CalendarDays,
+  Check,
   ChevronDown,
   ChevronRight,
   Download,
@@ -14,6 +15,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import {
+  getStores,
   getOperationsDaily,
   type OperationsDailyQuality,
   type OperationsDailyReport,
@@ -27,6 +29,14 @@ type MetricDefinition = {
   format: "money" | "integer" | "rate"
   detail?: boolean
   profit?: boolean
+}
+
+type StoreMultiSelectProps = {
+  stores: string[]
+  selectedStores: string[]
+  onChange: (stores: string[]) => void
+  onApply: () => void
+  disabled?: boolean
 }
 
 const metrics: MetricDefinition[] = [
@@ -46,6 +56,135 @@ const metrics: MetricDefinition[] = [
   { key: "logistics_cost_ratio", label: "物流辅材费率", format: "rate" },
   { key: "refund_rate", label: "退款率", format: "rate" },
 ]
+
+function StoreMultiSelect({ stores, selectedStores, onChange, onApply, disabled }: StoreMultiSelectProps) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const selectedSet = useMemo(() => new Set(selectedStores), [selectedStores])
+  const allSelected = stores.length > 0 && selectedStores.length === stores.length
+
+  useEffect(() => {
+    if (!open) return
+
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false)
+    }
+
+    document.addEventListener("pointerdown", closeOnOutsideClick)
+    document.addEventListener("keydown", closeOnEscape)
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick)
+      document.removeEventListener("keydown", closeOnEscape)
+    }
+  }, [open])
+
+  const toggleStore = (storeName: string) => {
+    onChange(
+      selectedSet.has(storeName)
+        ? selectedStores.filter((name) => name !== storeName)
+        : [...selectedStores, storeName],
+    )
+  }
+
+  const buttonLabel = stores.length === 0
+    ? "暂无店铺"
+    : allSelected
+      ? `全部店铺（${stores.length}）`
+      : selectedStores.length > 0
+        ? `已选 ${selectedStores.length} / ${stores.length} 家`
+        : "请选择店铺"
+
+  return (
+    <div ref={containerRef} className="relative">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="w-48 justify-between font-normal"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled || stores.length === 0}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="truncate">{buttonLabel}</span>
+        <ChevronDown className={cn("size-4 shrink-0 transition-transform", open && "rotate-180")} />
+      </Button>
+
+      {open ? (
+        <div className="absolute left-0 top-full z-50 mt-1 w-72 overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-lg">
+          <div className="flex items-center justify-between border-b px-3 py-2">
+            <span className="text-xs font-medium">选择参与汇总的店铺</span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                className="rounded px-2 py-1 text-xs text-primary hover:bg-muted"
+                onClick={() => onChange(stores)}
+              >
+                全选
+              </button>
+              <button
+                type="button"
+                className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
+                onClick={() => onChange([])}
+              >
+                清空
+              </button>
+            </div>
+          </div>
+          <div role="listbox" aria-multiselectable="true" className="max-h-72 overflow-y-auto p-1.5">
+            {stores.map((storeName) => {
+              const checked = selectedSet.has(storeName)
+              return (
+                <button
+                  key={storeName}
+                  type="button"
+                  role="option"
+                  aria-selected={checked}
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm hover:bg-muted"
+                  onClick={() => toggleStore(storeName)}
+                >
+                  <span className={cn(
+                    "flex size-4 shrink-0 items-center justify-center rounded border",
+                    checked ? "border-primary bg-primary text-primary-foreground" : "border-input",
+                  )}>
+                    {checked ? <Check className="size-3" /> : null}
+                  </span>
+                  <span className="truncate">{storeName}</span>
+                </button>
+              )
+            })}
+          </div>
+          <div className="flex items-center justify-between gap-3 border-t bg-muted/30 px-3 py-2">
+            <span className="text-[11px] text-muted-foreground">汇总、矩阵和导出将同步更新</span>
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 px-3 text-xs"
+              disabled={selectedStores.length === 0}
+              onClick={() => {
+                onApply()
+                setOpen(false)
+              }}
+            >
+              应用筛选
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function buildReportSearchParams(startDate: string, endDate: string, selectedStores: string[], storeCount: number) {
+  const params = new URLSearchParams({ start: startDate, end: endDate })
+  if (selectedStores.length > 0 && selectedStores.length < storeCount) {
+    selectedStores.forEach((storeName) => params.append("store", storeName))
+  }
+  return params
+}
 
 function formatValue(value: number | null | undefined, format: MetricDefinition["format"]) {
   if (value === null || value === undefined || Number.isNaN(value)) return "—"
@@ -89,9 +228,10 @@ function qualityLabel(quality?: OperationsDailyQuality) {
   return `缺少${missing.join("、")}数据`
 }
 
-function downloadReport(report: OperationsDailyReport, visibleMetrics: MetricDefinition[]) {
+function downloadReport(report: OperationsDailyReport, visibleMetrics: MetricDefinition[], filtered: boolean) {
   const headers = ["店铺", "指标", "期间合计", ...report.dates.map(shortDate)]
-  const groups = [report.total, ...report.stores]
+  const total = filtered ? { ...report.total, store_name: "所选店铺汇总" } : report.total
+  const groups = [total, ...report.stores]
   const rows = groups.flatMap((group) =>
     visibleMetrics.map((metric) => [
       group.store_name,
@@ -117,8 +257,13 @@ export function OperationsDailyPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const startParam = searchParams.get("start") || ""
   const endParam = searchParams.get("end") || ""
+  const storeParams = searchParams.getAll("store")
+  const storeParamKey = storeParams.join("\u001f")
   const [startDate, setStartDate] = useState(startParam)
   const [endDate, setEndDate] = useState(endParam)
+  const [stores, setStores] = useState<string[]>([])
+  const [selectedStores, setSelectedStores] = useState<string[]>(storeParams)
+  const [storesLoading, setStoresLoading] = useState(true)
   const [report, setReport] = useState<OperationsDailyReport | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -129,19 +274,46 @@ export function OperationsDailyPage() {
     () => metrics.filter((metric) => showDetails || !metric.detail),
     [showDetails],
   )
+  const isFiltered = storeParams.length > 0
 
   useEffect(() => {
     let active = true
+    getStores("pdd")
+      .then((data) => {
+        if (!active) return
+        setStores(data.map((store) => store.name))
+      })
+      .catch((err) => active && setError(err.message || "店铺列表加载失败"))
+      .finally(() => active && setStoresLoading(false))
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (stores.length === 0) return
+    const requestedStores = storeParamKey ? storeParamKey.split("\u001f") : stores
+    const validStores = requestedStores.filter((name) => stores.includes(name))
+    setSelectedStores(validStores.length > 0 ? validStores : stores)
+  }, [storeParamKey, stores])
+
+  useEffect(() => {
+    let active = true
+    const requestedStores = storeParamKey ? storeParamKey.split("\u001f") : []
     setLoading(true)
     setError("")
-    getOperationsDaily(startParam || undefined, endParam || undefined)
+    getOperationsDaily(startParam || undefined, endParam || undefined, requestedStores.length > 0 ? requestedStores : undefined)
       .then((data) => {
         if (!active) return
         setReport(data)
         setStartDate(data.start_date)
         setEndDate(data.end_date)
         if (!startParam || !endParam) {
-          setSearchParams({ start: data.start_date, end: data.end_date }, { replace: true })
+          const nextParams = new URLSearchParams()
+          nextParams.set("start", data.start_date)
+          nextParams.set("end", data.end_date)
+          requestedStores.forEach((storeName) => nextParams.append("store", storeName))
+          setSearchParams(nextParams, { replace: true })
         }
       })
       .catch((err) => active && setError(err.message || "运营日报加载失败"))
@@ -149,11 +321,16 @@ export function OperationsDailyPage() {
     return () => {
       active = false
     }
-  }, [startParam, endParam, setSearchParams])
+  }, [startParam, endParam, storeParamKey, setSearchParams])
 
   const applyRange = () => {
     if (!startDate || !endDate) return
-    setSearchParams({ start: startDate, end: endDate })
+    if (selectedStores.length === 0) {
+      setError("请至少选择一个店铺")
+      return
+    }
+    setError("")
+    setSearchParams(buildReportSearchParams(startDate, endDate, selectedStores, stores.length))
   }
 
   const showRecentDays = (days: number) => {
@@ -169,7 +346,7 @@ export function OperationsDailyPage() {
     ].join("-")
     setStartDate(format(start))
     setEndDate(format(end))
-    setSearchParams({ start: format(start), end: format(end) })
+    setSearchParams(buildReportSearchParams(format(start), format(end), selectedStores, stores.length))
   }
 
   const toggleStore = (storeName: string) => {
@@ -183,8 +360,8 @@ export function OperationsDailyPage() {
 
   const summaryCards = report
     ? [
-        { label: "全店有效实收", value: formatValue(report.summary.valid_merchant_income, "money") },
-        { label: "全店经营利润", value: formatValue(report.summary.profit_loss, "money"), profit: true },
+        { label: isFiltered ? "所选店铺有效实收" : "全店有效实收", value: formatValue(report.summary.valid_merchant_income, "money") },
+        { label: isFiltered ? "所选店铺经营利润" : "全店经营利润", value: formatValue(report.summary.profit_loss, "money"), profit: true },
         { label: "经营利润率", value: formatValue(report.summary.profit_loss_rate, "rate"), profit: true },
         { label: "推广费率", value: formatValue(report.summary.promo_cost_ratio, "rate") },
         { label: "日均有效实收", value: formatValue(report.summary.daily_income, "money") },
@@ -192,11 +369,13 @@ export function OperationsDailyPage() {
       ]
     : []
 
-  const groups = report ? [report.total, ...report.stores] : []
+  const groups = report
+    ? [isFiltered ? { ...report.total, store_name: "所选店铺汇总" } : report.total, ...report.stores]
+    : []
 
   return (
     <div className="mx-auto flex w-full max-w-[1800px] flex-col gap-5">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+      <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-end 2xl:justify-between">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
             <Store className="size-3.5" />
@@ -206,7 +385,17 @@ export function OperationsDailyPage() {
           <p className="text-sm text-muted-foreground">按店铺对比收入、成本、投放与利润，快速定位异常经营日。</p>
         </div>
 
-        <div className="flex flex-wrap items-end gap-2">
+        <div className="flex max-w-full flex-wrap items-end gap-2 2xl:justify-end">
+          <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+            <span>店铺筛选</span>
+            <StoreMultiSelect
+              stores={stores}
+              selectedStores={selectedStores}
+              onChange={setSelectedStores}
+              onApply={applyRange}
+              disabled={storesLoading || loading}
+            />
+          </div>
           <label className="flex flex-col gap-1 text-xs text-muted-foreground">
             开始日期
             <Input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} className="w-40" />
@@ -217,7 +406,7 @@ export function OperationsDailyPage() {
           </label>
           <Button variant="outline" size="sm" onClick={() => showRecentDays(7)}>近 7 天</Button>
           <Button variant="outline" size="sm" onClick={() => showRecentDays(14)}>近 14 天</Button>
-          <Button size="sm" onClick={applyRange} disabled={loading}>
+          <Button size="sm" onClick={applyRange} disabled={loading || storesLoading || selectedStores.length === 0}>
             <RefreshCw data-icon="inline-start" className={cn(loading && "animate-spin")} />
             查询
           </Button>
@@ -266,7 +455,7 @@ export function OperationsDailyPage() {
             <Button variant="outline" size="sm" onClick={() => setShowDetails((value) => !value)}>
               {showDetails ? "收起辅助指标" : "展开辅助指标"}
             </Button>
-            <Button variant="outline" size="sm" disabled={!report} onClick={() => report && downloadReport(report, visibleMetrics)}>
+            <Button variant="outline" size="sm" disabled={!report} onClick={() => report && downloadReport(report, visibleMetrics, isFiltered)}>
               <Download data-icon="inline-start" />
               导出 CSV
             </Button>

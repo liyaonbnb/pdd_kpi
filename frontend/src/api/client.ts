@@ -306,10 +306,11 @@ export async function getDashboardSummary(startDate: string, endDate: string, st
   return res.data as { store_count: number; start_date: string; end_date: string; kpis: Kpis; trend: any[] }
 }
 
-export async function getOperationsDaily(startDate?: string, endDate?: string) {
-  const params: Record<string, string> = {}
+export async function getOperationsDaily(startDate?: string, endDate?: string, storeNames?: string[]) {
+  const params: Record<string, string | string[]> = {}
   if (startDate) params.start_date = startDate
   if (endDate) params.end_date = endDate
+  if (storeNames && storeNames.length > 0) params.store_names = storeNames
   const res = await api.get<OperationsDailyReport>("/dashboard/operations-daily", { params })
   return res.data
 }
