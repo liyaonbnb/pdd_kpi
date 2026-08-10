@@ -6,6 +6,8 @@
 
 import io
 import json
+import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -17,6 +19,7 @@ from storage import list_available_dates, load_daily_orders
 
 DATA_DIR = Path("data")
 COSTS_FILE = DATA_DIR / "costs.json"
+logger = logging.getLogger(__name__)
 
 
 def _ensure_dir():
@@ -29,15 +32,31 @@ def load_cost_config() -> Dict:
     if not COSTS_FILE.exists():
         return {"merchant_costs": {}}
     try:
-        return json.loads(COSTS_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return {"merchant_costs": {}}
+        config = json.loads(COSTS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.error("成本配置文件无法读取: %s", COSTS_FILE, exc_info=True)
+        raise RuntimeError(f"成本配置文件损坏或不可读，请先从备份恢复: {COSTS_FILE}") from exc
+    if not isinstance(config, dict):
+        raise RuntimeError(f"成本配置文件格式无效，请先从备份恢复: {COSTS_FILE}")
+    return config
 
 
 def save_cost_config(config: Dict):
     """保存成本配置"""
     _ensure_dir()
-    COSTS_FILE.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp_path = COSTS_FILE.with_name(f".{COSTS_FILE.name}.tmp")
+    payload = json.dumps(config, ensure_ascii=False, indent=2)
+    try:
+        with temp_path.open("w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, COSTS_FILE)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _normalize_store(store_name: Optional[str]) -> str:
