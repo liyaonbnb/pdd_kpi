@@ -7,7 +7,10 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  Layers3,
   RefreshCw,
+  Send,
+  Sparkles,
   Store,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -17,6 +20,9 @@ import { Input } from "@/components/ui/input"
 import {
   getStores,
   getOperationsDaily,
+  previewOperationsDailyWecom,
+  sendOperationsDailyWecom,
+  type OperationsDailyPlatform,
   type OperationsDailyQuality,
   type OperationsDailyReport,
   type OperationsDailyStore,
@@ -56,6 +62,13 @@ const metrics: MetricDefinition[] = [
   { key: "logistics_cost_ratio", label: "物流辅材费率", format: "rate" },
   { key: "refund_rate", label: "退款率", format: "rate" },
 ]
+
+const platformAccent: Record<OperationsDailyPlatform["platform"], string> = {
+  pdd: "border-l-red-500",
+  douyin: "border-l-cyan-500",
+  tmall: "border-l-orange-500",
+  wechat: "border-l-emerald-500",
+}
 
 function StoreMultiSelect({ stores, selectedStores, onChange, onApply, disabled }: StoreMultiSelectProps) {
   const [open, setOpen] = useState(false)
@@ -228,6 +241,91 @@ function qualityLabel(quality?: OperationsDailyQuality) {
   return `缺少${missing.join("、")}数据`
 }
 
+function PlatformOverview({ platforms }: { platforms: OperationsDailyPlatform[] }) {
+  return (
+    <section className="space-y-3" aria-labelledby="platform-overview-title">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <h3 id="platform-overview-title" className="flex items-center gap-2 text-base font-semibold">
+            <Layers3 className="size-4" />
+            平台经营概览
+          </h3>
+          <p className="mt-1 text-xs text-muted-foreground">统一展示有效实收、订单、投放、利润与退款表现。</p>
+        </div>
+        <Badge variant="outline">{platforms.filter((item) => item.has_data).length} / {platforms.length} 个平台有数据</Badge>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
+        {platforms.map((platform) => {
+          const latest = platform.daily[platform.daily.length - 1]
+          return (
+            <Card key={platform.platform} className={cn("border-l-4", platformAccent[platform.platform])}>
+              <CardHeader className="flex flex-row items-start justify-between gap-3 p-4 pb-3">
+                <div>
+                  <CardTitle className="text-base">{platform.label}</CardTitle>
+                  <CardDescription className="mt-1">{platform.store_count} 家店铺 · {platform.data_days} 个数据日</CardDescription>
+                </div>
+                <Badge variant={platform.has_data ? "secondary" : "outline"}>
+                  {platform.has_data ? "已汇总" : "暂无数据"}
+                </Badge>
+              </CardHeader>
+              <CardContent className="space-y-3 px-4 pb-4">
+                {platform.has_data ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                      <div>
+                        <div className="text-[11px] text-muted-foreground">有效实收</div>
+                        <div className="mt-0.5 text-sm font-semibold tabular-nums">{formatValue(platform.totals.income, "money")}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-muted-foreground">经营利润</div>
+                        <div className={cn("mt-0.5 text-sm font-semibold tabular-nums", platform.totals.profit_loss < 0 && "text-destructive")}>
+                          {formatValue(platform.totals.profit_loss, "money")}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-muted-foreground">有效订单</div>
+                        <div className="mt-0.5 text-sm font-semibold tabular-nums">{formatValue(platform.totals.order_count, "integer")}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-muted-foreground">经营利润率</div>
+                        <div className={cn("mt-0.5 text-sm font-semibold tabular-nums", platform.totals.profit_loss_rate < 0 && "text-destructive")}>
+                          {formatValue(platform.totals.profit_loss_rate, "rate")}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-muted-foreground">{platform.totals.promo_spend === null ? "退款率" : "推广费"}</div>
+                        <div className="mt-0.5 text-sm font-semibold tabular-nums">
+                          {platform.totals.promo_spend === null
+                            ? formatValue(platform.totals.refund_rate, "rate")
+                            : formatValue(platform.totals.promo_spend, "money")}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-muted-foreground">{platform.totals.roi === null ? "数据日" : "投放 ROI"}</div>
+                        <div className="mt-0.5 text-sm font-semibold tabular-nums">
+                          {platform.totals.roi === null
+                            ? `${platform.data_days} 天`
+                            : platform.totals.roi.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="border-t pt-2 text-[11px] text-muted-foreground">
+                      {latest ? `最近数据 ${shortDate(latest.date)} · 实收 ${formatValue(latest.income, "money")}` : "当前范围无每日明细"}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">当前日期范围暂无已导入数据</div>
+                )}
+              </CardContent>
+            </Card>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
 function downloadReport(report: OperationsDailyReport, visibleMetrics: MetricDefinition[], filtered: boolean) {
   const headers = ["店铺", "指标", "期间合计", ...report.dates.map(shortDate)]
   const total = filtered ? { ...report.total, store_name: "所选店铺汇总" } : report.total
@@ -269,6 +367,13 @@ export function OperationsDailyPage() {
   const [error, setError] = useState("")
   const [showDetails, setShowDetails] = useState(false)
   const [collapsedStores, setCollapsedStores] = useState<Set<string>>(new Set())
+  const [wecomPreviewLoading, setWecomPreviewLoading] = useState(false)
+  const [wecomSendLoading, setWecomSendLoading] = useState(false)
+  const [wecomDraftId, setWecomDraftId] = useState("")
+  const [wecomDraftContent, setWecomDraftContent] = useState("")
+  const [wecomDraftSent, setWecomDraftSent] = useState(false)
+  const [wecomMessage, setWecomMessage] = useState("")
+  const [wecomMessageKind, setWecomMessageKind] = useState<"success" | "error">("success")
 
   const visibleMetrics = useMemo(
     () => metrics.filter((metric) => showDetails || !metric.detail),
@@ -323,6 +428,13 @@ export function OperationsDailyPage() {
     }
   }, [startParam, endParam, storeParamKey, setSearchParams])
 
+  useEffect(() => {
+    setWecomDraftId("")
+    setWecomDraftContent("")
+    setWecomDraftSent(false)
+    setWecomMessage("")
+  }, [startParam, endParam])
+
   const applyRange = () => {
     if (!startDate || !endDate) return
     if (selectedStores.length === 0) {
@@ -358,14 +470,52 @@ export function OperationsDailyPage() {
     })
   }
 
+  const handleWecomPreview = async () => {
+    if (!report || wecomPreviewLoading || wecomSendLoading) return
+    setWecomPreviewLoading(true)
+    setWecomDraftId("")
+    setWecomDraftContent("")
+    setWecomDraftSent(false)
+    setWecomMessage("")
+    try {
+      const draft = await previewOperationsDailyWecom(report.start_date, report.end_date)
+      setWecomDraftId(draft.draft_id)
+      setWecomDraftContent(draft.content)
+      setWecomMessageKind("success")
+      setWecomMessage("全平台企微日报已生成")
+    } catch (err: any) {
+      setWecomMessageKind("error")
+      setWecomMessage(err.message || "企微日报生成失败")
+    } finally {
+      setWecomPreviewLoading(false)
+    }
+  }
+
+  const handleWecomSend = async () => {
+    if (!report || !wecomDraftId || wecomSendLoading || wecomPreviewLoading || wecomDraftSent) return
+    setWecomSendLoading(true)
+    setWecomMessage("")
+    try {
+      await sendOperationsDailyWecom(report.start_date, report.end_date, wecomDraftId)
+      setWecomDraftSent(true)
+      setWecomMessageKind("success")
+      setWecomMessage("全平台运营日报已发送到企业微信")
+    } catch (err: any) {
+      setWecomMessageKind("error")
+      setWecomMessage(err.message || "企业微信发送失败")
+    } finally {
+      setWecomSendLoading(false)
+    }
+  }
+
   const summaryCards = report
     ? [
-        { label: isFiltered ? "所选店铺有效实收" : "全店有效实收", value: formatValue(report.summary.valid_merchant_income, "money") },
-        { label: isFiltered ? "所选店铺经营利润" : "全店经营利润", value: formatValue(report.summary.profit_loss, "money"), profit: true },
-        { label: "经营利润率", value: formatValue(report.summary.profit_loss_rate, "rate"), profit: true },
-        { label: "推广费率", value: formatValue(report.summary.promo_cost_ratio, "rate") },
-        { label: "日均有效实收", value: formatValue(report.summary.daily_income, "money") },
-        { label: "数据异常店铺", value: `${report.summary.data_issue_store_count || 0} 家`, alert: true },
+        { label: "全平台有效实收", value: formatValue(report.platform_summary.income, "money") },
+        { label: "全平台经营利润", value: formatValue(report.platform_summary.profit_loss, "money"), negative: report.platform_summary.profit_loss < 0 },
+        { label: "经营利润率", value: formatValue(report.platform_summary.profit_loss_rate, "rate"), negative: report.platform_summary.profit_loss_rate < 0 },
+        { label: "全平台推广费", value: formatValue(report.platform_summary.promo_spend, "money") },
+        { label: "覆盖店铺", value: `${report.platform_summary.store_count || 0} 家` },
+        { label: "数据平台", value: `${report.platform_summary.data_platform_count} / ${report.platform_summary.platform_count} 个`, alert: report.platform_summary.data_platform_count < report.platform_summary.platform_count },
       ]
     : []
 
@@ -379,15 +529,15 @@ export function OperationsDailyPage() {
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
             <Store className="size-3.5" />
-            拼多多 · 主账号视图
+            全平台 · 主账号视图
           </div>
-          <h2 className="text-2xl font-bold tracking-tight">全店运营日报</h2>
-          <p className="text-sm text-muted-foreground">按店铺对比收入、成本、投放与利润，快速定位异常经营日。</p>
+          <h2 className="text-2xl font-bold tracking-tight">全平台运营日报</h2>
+          <p className="text-sm text-muted-foreground">统一查看各平台收入、订单、投放与利润，并下钻拼多多店铺日数据。</p>
         </div>
 
         <div className="flex max-w-full flex-wrap items-end gap-2 2xl:justify-end">
           <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-            <span>店铺筛选</span>
+            <span>拼多多矩阵店铺</span>
             <StoreMultiSelect
               stores={stores}
               selectedStores={selectedStores}
@@ -410,6 +560,14 @@ export function OperationsDailyPage() {
             <RefreshCw data-icon="inline-start" className={cn(loading && "animate-spin")} />
             查询
           </Button>
+          <Button variant="outline" size="sm" onClick={handleWecomPreview} disabled={!report || loading || wecomPreviewLoading || wecomSendLoading}>
+            <Sparkles className={cn("size-4", wecomPreviewLoading && "animate-pulse")} />
+            {wecomPreviewLoading ? "生成中" : "生成企微预览"}
+          </Button>
+          <Button size="sm" onClick={handleWecomSend} disabled={!wecomDraftId || wecomDraftSent || wecomPreviewLoading || wecomSendLoading}>
+            <Send className={cn("size-4", wecomSendLoading && "animate-pulse")} />
+            {wecomDraftSent ? "已发送" : wecomSendLoading ? "发送中" : "发送到企微"}
+          </Button>
         </div>
       </div>
 
@@ -422,32 +580,43 @@ export function OperationsDailyPage() {
         </Card>
       )}
 
+      {wecomMessage || wecomDraftContent ? (
+        <section className="border-y bg-muted/20 px-4 py-3" aria-live="polite">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className={cn("text-sm", wecomMessageKind === "error" ? "text-destructive" : "text-foreground")}>{wecomMessage}</div>
+            {wecomDraftContent ? <Badge variant="outline">草稿 30 分钟有效</Badge> : null}
+          </div>
+          {wecomDraftContent ? (
+            <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap border-t pt-3 text-xs leading-5 text-muted-foreground">{wecomDraftContent}</pre>
+          ) : null}
+        </section>
+      ) : null}
+
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
         {summaryCards.map((card) => {
-          const profit = Number(report?.summary.profit_loss || 0)
-          const profitRate = Number(report?.summary.profit_loss_rate || 0)
-          const negative = card.profit && (card.label.includes("率") ? profitRate < 0 : profit < 0)
-          const hasIssues = card.alert && Number(report?.summary.data_issue_store_count || 0) > 0
+          const hasIssues = Boolean(card.alert)
           return (
             <Card key={card.label} className={cn(hasIssues && "border-destructive/40")}>
               <CardHeader className="p-4 pb-2">
                 <CardDescription className="text-xs">{card.label}</CardDescription>
-                <CardTitle className={cn("text-xl tabular-nums", negative && "text-destructive")}>{card.value}</CardTitle>
+                <CardTitle className={cn("text-xl tabular-nums", card.negative && "text-destructive")}>{card.value}</CardTitle>
               </CardHeader>
               {hasIssues && (
-                <CardContent className="px-4 pb-4 pt-0 text-xs text-destructive">存在缺失或部分导入数据</CardContent>
+                <CardContent className="px-4 pb-4 pt-0 text-xs text-destructive">存在平台暂无当前范围数据</CardContent>
               )}
             </Card>
           )
         })}
       </div>
 
+      {report ? <PlatformOverview platforms={report.platforms} /> : null}
+
       <Card>
         <CardHeader className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-col gap-1">
             <CardTitle className="flex items-center gap-2 text-base">
               <CalendarDays className="size-4" />
-              店铺经营矩阵
+              拼多多店铺经营矩阵
             </CardTitle>
             <CardDescription>金额按期间求和，比率按汇总金额重新计算；“—”表示当天没有可用数据。</CardDescription>
           </div>
@@ -466,7 +635,7 @@ export function OperationsDailyPage() {
           {loading && !report ? (
             <div className="flex min-h-64 items-center justify-center gap-2 text-sm text-muted-foreground">
               <RefreshCw className="size-4 animate-spin" />
-              正在汇总全部店铺数据…
+              正在汇总全平台经营数据…
             </div>
           ) : report && groups.length > 0 ? (
             <div className="max-h-[calc(100vh-280px)] overflow-auto">

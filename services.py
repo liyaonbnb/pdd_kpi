@@ -1031,6 +1031,280 @@ def get_operations_daily_report(
     })
 
 
+def _first_number(source: Dict[str, Any], *keys: str) -> float:
+    for key in keys:
+        value = source.get(key)
+        if value is not None:
+            return float(value or 0)
+    return 0.0
+
+
+def _normalize_operations_platform(
+    platform: str,
+    label: str,
+    store_count: int,
+    kpis: Dict[str, Any],
+    cost_kpis: Dict[str, Any],
+    trend: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    def normalize_row(row: Dict[str, Any]) -> Dict[str, Any]:
+        income = _first_number(
+            row,
+            "valid_merchant_income",
+            "net_revenue",
+            "actual_revenue",
+            "valid_gmv",
+        )
+        promo_spend = None if platform == "wechat" else _first_number(row, "promo_spend", "spend")
+        roi = None if platform == "wechat" else _first_number(row, "real_roi", "valid_roi", "roi")
+        return {
+            "date": row.get("date"),
+            "income": income,
+            "order_count": _first_number(row, "valid_order_count", "order_count"),
+            "promo_spend": promo_spend,
+            "profit_loss": _first_number(row, "profit_loss"),
+            "profit_loss_rate": _first_number(row, "profit_loss_rate"),
+            "refund_rate": _first_number(row, "refund_rate"),
+            "roi": roi,
+        }
+
+    merged = {**(kpis or {}), **(cost_kpis or {})}
+    normalized_daily = [normalize_row(row) for row in trend if row.get("date")]
+    totals = normalize_row(merged)
+    totals.pop("date", None)
+    return {
+        "platform": platform,
+        "label": label,
+        "store_count": store_count,
+        "has_data": bool(normalized_daily),
+        "data_days": len(normalized_daily),
+        "totals": totals,
+        "daily": normalized_daily,
+    }
+
+
+def _resolve_all_platform_operations_range(
+    start_date: Optional[datetime.date],
+    end_date: Optional[datetime.date],
+    platform_stores: Dict[str, List[str]],
+) -> tuple[Optional[datetime.date], Optional[datetime.date]]:
+    if end_date is not None:
+        return start_date, end_date
+
+    import douyin_storage
+    import tmall_storage
+    import wechat_storage
+
+    date_loaders = {
+        "pdd": list_available_dates,
+        "douyin": douyin_storage.list_available_dates,
+        "tmall": tmall_storage.list_available_dates,
+        "wechat": wechat_storage.list_available_dates,
+    }
+    available_dates = [
+        date_str
+        for platform, stores in platform_stores.items()
+        for store_name in stores
+        for date_str in date_loaders[platform](store_name)
+        if date_str
+    ]
+    if not available_dates:
+        return start_date, end_date
+
+    resolved_end = datetime.date.fromisoformat(max(available_dates))
+    resolved_start = start_date or resolved_end - datetime.timedelta(days=6)
+    return resolved_start, resolved_end
+
+
+@cached_with_ttl(_CACHE_TTL_SECONDS)
+def get_all_platform_operations_daily(
+    start_date: Optional[datetime.date],
+    end_date: Optional[datetime.date],
+    pdd_store_names: List[str],
+) -> Dict[str, Any]:
+    """Return the PDD store matrix plus comparable summaries for every platform."""
+    from store_manager import list_store_names
+    import douyin_services
+    import tmall_services
+    import wechat_services
+
+    platform_stores = {
+        platform: list_store_names(platform)
+        for platform in ("pdd", "douyin", "tmall", "wechat")
+    }
+    start_date, end_date = _resolve_all_platform_operations_range(
+        start_date,
+        end_date,
+        platform_stores,
+    )
+    pdd_matrix = get_operations_daily_report(start_date, end_date, pdd_store_names)
+    resolved_start = datetime.date.fromisoformat(pdd_matrix["start_date"])
+    resolved_end = datetime.date.fromisoformat(pdd_matrix["end_date"])
+    pdd_summary = get_dashboard_summary(
+        resolved_start,
+        resolved_end,
+        store_names=platform_stores["pdd"],
+    )
+    douyin_summary = douyin_services.get_douyin_dashboard_summary(
+        resolved_start,
+        resolved_end,
+        store_names=platform_stores["douyin"],
+    )
+    tmall_summary = tmall_services.get_tmall_dashboard_summary(
+        resolved_start,
+        resolved_end,
+        store_names=platform_stores["tmall"],
+    )
+    wechat_summary = wechat_services.get_wechat_dashboard_summary(
+        resolved_start,
+        resolved_end,
+        store_names=platform_stores["wechat"],
+    )
+
+    platforms = [
+        _normalize_operations_platform(
+            "pdd",
+            "拼多多",
+            len(platform_stores["pdd"]),
+            pdd_summary.get("kpis") or {},
+            {},
+            pdd_summary.get("trend") or [],
+        ),
+        _normalize_operations_platform(
+            "douyin",
+            "抖音",
+            len(platform_stores["douyin"]),
+            douyin_summary.get("kpis") or {},
+            douyin_summary.get("cost_kpis") or {},
+            douyin_summary.get("trend") or [],
+        ),
+        _normalize_operations_platform(
+            "tmall",
+            "天猫",
+            len(platform_stores["tmall"]),
+            tmall_summary.get("kpis") or {},
+            tmall_summary.get("cost_kpis") or {},
+            tmall_summary.get("trend") or [],
+        ),
+        _normalize_operations_platform(
+            "wechat",
+            "微信小店",
+            len(platform_stores["wechat"]),
+            wechat_summary.get("kpis") or {},
+            wechat_summary.get("cost_kpis") or {},
+            wechat_summary.get("trend") or [],
+        ),
+    ]
+
+    income = sum(float(item["totals"]["income"] or 0) for item in platforms)
+    profit = sum(float(item["totals"]["profit_loss"] or 0) for item in platforms)
+    pdd_matrix["platform_summary"] = {
+        "income": income,
+        "order_count": sum(float(item["totals"]["order_count"] or 0) for item in platforms),
+        "promo_spend": sum(float(item["totals"]["promo_spend"] or 0) for item in platforms),
+        "profit_loss": profit,
+        "profit_loss_rate": safe_div(profit, income) * 100,
+        "store_count": sum(item["store_count"] for item in platforms),
+        "platform_count": len(platforms),
+        "data_platform_count": sum(1 for item in platforms if item["has_data"]),
+    }
+    pdd_matrix["platforms"] = platforms
+    return _json_safe(pdd_matrix)
+
+
+def _format_operations_money(value: Any) -> str:
+    return f"¥{float(value or 0):,.2f}"
+
+
+def _format_operations_rate(value: Any) -> str:
+    return f"{float(value or 0):.2f}%"
+
+
+def build_all_platform_operations_wecom_report(
+    start_date: datetime.date,
+    end_date: datetime.date,
+) -> str:
+    from store_manager import list_store_names
+
+    report = get_all_platform_operations_daily(
+        start_date,
+        end_date,
+        list_store_names("pdd"),
+    )
+    summary = report["platform_summary"]
+    lines = [
+        f"## 📋 全平台运营日报 ({report['start_date']} ~ {report['end_date']})",
+        "",
+        "### 全平台汇总",
+        f"- 覆盖平台：{summary['data_platform_count']} / {summary['platform_count']} 个有数据",
+        f"- 覆盖店铺：{int(summary['store_count'])} 家",
+        f"- 有效实收：{_format_operations_money(summary['income'])}",
+        f"- 有效订单：{int(summary['order_count']):,} 单",
+        f"- 推广费：{_format_operations_money(summary['promo_spend'])}",
+        f"- 经营利润：{_format_operations_money(summary['profit_loss'])}",
+        f"- 经营利润率：{_format_operations_rate(summary['profit_loss_rate'])}",
+        "",
+    ]
+
+    for platform in report["platforms"]:
+        lines.extend([f"### {platform['label']}", f"- 店铺数：{platform['store_count']} 家"])
+        if not platform["has_data"]:
+            lines.extend(["- 当前日期范围暂无已导入数据", ""])
+            continue
+        totals = platform["totals"]
+        lines.extend([
+            f"- 有效实收：{_format_operations_money(totals['income'])}",
+            f"- 有效订单：{int(totals['order_count']):,} 单",
+            f"- 经营利润：{_format_operations_money(totals['profit_loss'])}",
+            f"- 经营利润率：{_format_operations_rate(totals['profit_loss_rate'])}",
+            f"- 退款率：{_format_operations_rate(totals['refund_rate'])}",
+        ])
+        if totals["promo_spend"] is not None:
+            lines.append(f"- 推广费：{_format_operations_money(totals['promo_spend'])}")
+            lines.append(f"- 投放 ROI：{float(totals['roi'] or 0):.2f}")
+        recent_daily = platform["daily"][-7:]
+        if recent_daily:
+            lines.append("- 最近每日实收：" + "；".join(
+                f"{row['date'][5:]} {_format_operations_money(row['income'])}"
+                for row in recent_daily
+            ))
+        lines.append("")
+
+    lines.extend(["---", "来自 全平台推广 BI 看板"])
+    return "\n".join(lines)
+
+
+def _operations_draft_date(start_date: datetime.date, end_date: datetime.date) -> str:
+    return f"{start_date.isoformat()}:{end_date.isoformat()}"
+
+
+def preview_all_platform_operations_wecom_report(
+    start_date: datetime.date,
+    end_date: datetime.date,
+) -> Dict[str, Any]:
+    content = build_all_platform_operations_wecom_report(start_date, end_date)
+    return create_report_draft(
+        content,
+        _operations_draft_date(start_date, end_date),
+        platform="operations",
+    )
+
+
+def send_all_platform_operations_wecom_report(
+    start_date: datetime.date,
+    end_date: datetime.date,
+    draft_id: str,
+) -> Dict[str, Any]:
+    draft = get_report_draft(
+        draft_id,
+        _operations_draft_date(start_date, end_date),
+        platform="operations",
+    )
+    result = send_wecom_report(draft["content"], get_wecom_config())
+    mark_report_draft_sent(draft_id)
+    return result
+
+
 # ---------- 成本 ----------
 
 def get_costs(store_name: str) -> List[Dict[str, Any]]:

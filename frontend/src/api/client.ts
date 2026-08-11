@@ -133,6 +133,37 @@ export type OperationsDailyStore = {
   quality_counts?: { complete: number; partial: number; missing: number }
 }
 
+export type OperationsDailyPlatformTotals = {
+  income: number
+  order_count: number
+  promo_spend: number | null
+  profit_loss: number
+  profit_loss_rate: number
+  refund_rate: number
+  roi: number | null
+}
+
+export type OperationsDailyPlatform = {
+  platform: "pdd" | "douyin" | "tmall" | "wechat"
+  label: string
+  store_count: number
+  has_data: boolean
+  data_days: number
+  totals: OperationsDailyPlatformTotals
+  daily: Array<OperationsDailyPlatformTotals & { date: string }>
+}
+
+export type OperationsDailyPlatformSummary = {
+  income: number
+  order_count: number
+  promo_spend: number
+  profit_loss: number
+  profit_loss_rate: number
+  store_count: number
+  platform_count: number
+  data_platform_count: number
+}
+
 export type OperationsDailyReport = {
   start_date: string
   end_date: string
@@ -140,6 +171,8 @@ export type OperationsDailyReport = {
   summary: OperationsDailyKpis
   total: OperationsDailyStore
   stores: OperationsDailyStore[]
+  platform_summary: OperationsDailyPlatformSummary
+  platforms: OperationsDailyPlatform[]
 }
 
 export type Cost = {
@@ -312,6 +345,27 @@ export async function getOperationsDaily(startDate?: string, endDate?: string, s
   if (endDate) params.end_date = endDate
   if (storeNames && storeNames.length > 0) params.store_names = storeNames
   const res = await api.get<OperationsDailyReport>("/dashboard/operations-daily", { params })
+  return res.data
+}
+
+export async function previewOperationsDailyWecom(startDate: string, endDate: string) {
+  const res = await api.post("/dashboard/operations-daily/wecom/preview", null, {
+    params: { start_date: startDate, end_date: endDate },
+  })
+  return res.data as {
+    draft_id: string
+    content: string
+    created_at: string
+    expires_at: string
+  }
+}
+
+export async function sendOperationsDailyWecom(startDate: string, endDate: string, draftId: string) {
+  const res = await api.post("/dashboard/operations-daily/wecom/send", {
+    start_date: startDate,
+    end_date: endDate,
+    draft_id: draftId,
+  })
   return res.data
 }
 
