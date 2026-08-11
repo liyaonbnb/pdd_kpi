@@ -48,13 +48,32 @@ def _ensure_dir():
     DATA_DIR.mkdir(exist_ok=True)
 
 
+def _config_chat_id(config: Dict) -> str:
+    """读取企微会话 ID，兼容历史 chatid 与前端使用的 chat_id。"""
+    for key in ("chat_id", "chatid"):
+        value = str(config.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _normalize_wecom_config(config: Dict) -> Dict:
+    """统一保存两种字段名，避免旧配置覆盖用户刚填写的新 ID。"""
+    normalized = dict(config or {})
+    chat_id = _config_chat_id(normalized)
+    if chat_id:
+        normalized["chat_id"] = chat_id
+        normalized["chatid"] = chat_id
+    return normalized
+
+
 def load_wecom_config() -> Dict:
     """加载企业微信配置"""
     _ensure_dir()
     if not WECOM_CONFIG_FILE.exists():
         return {}
     try:
-        return json.loads(WECOM_CONFIG_FILE.read_text(encoding="utf-8"))
+        return _normalize_wecom_config(json.loads(WECOM_CONFIG_FILE.read_text(encoding="utf-8")))
     except Exception:
         return {}
 
@@ -62,7 +81,10 @@ def load_wecom_config() -> Dict:
 def save_wecom_config(config: Dict):
     """保存企业微信配置"""
     _ensure_dir()
-    WECOM_CONFIG_FILE.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+    WECOM_CONFIG_FILE.write_text(
+        json.dumps(_normalize_wecom_config(config), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +425,7 @@ def test_aibot_connection(config: Dict) -> Dict:
     """测试智能机器人连接。无 chatid 时只做订阅认证；有 chatid 时发送测试消息。"""
     bot_id = config.get("bot_id", "")
     secret = config.get("secret", "")
-    chatid = config.get("chatid", "")
+    chatid = _config_chat_id(config)
     chat_type = int(config.get("chat_type", 2))
 
     if not bot_id or not secret:
@@ -519,11 +541,12 @@ def send_appchat_markdown(
 
 def send_wecom_report(content: str, config: Dict) -> Dict:
     """根据配置自动选择发送方式，优先使用智能机器人长连接"""
+    chatid = _config_chat_id(config)
     if _aibot_enabled(config):
         return send_aibot_markdown(
             bot_id=config.get("bot_id", ""),
             secret=config.get("secret", ""),
-            chatid=config.get("chatid", ""),
+            chatid=chatid,
             chat_type=int(config.get("chat_type", 2)),
             content=content,
             timeout=config.get("timeout", 30),
@@ -534,7 +557,7 @@ def send_wecom_report(content: str, config: Dict) -> Dict:
         return send_appchat_markdown(
             corp_id=config.get("corp_id", ""),
             corp_secret=config.get("corp_secret", ""),
-            chatid=config.get("chatid", ""),
+            chatid=chatid,
             content=content,
             timeout=config.get("timeout", 30),
         )
