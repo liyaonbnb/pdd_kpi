@@ -1269,7 +1269,7 @@ def listen_wecom(config: Dict[str, Any], timeout: int = 60) -> Optional[str]:
 
 
 def send_wecom_report_service(report_date: datetime.date, config: Dict[str, Any]) -> Dict[str, Any]:
-    content = build_daily_report(report_date)
+    content = build_daily_report(report_date, ai_config=get_config_defaults())
     result = send_wecom_report(content, config)
     return result
 

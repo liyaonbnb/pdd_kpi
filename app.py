@@ -486,7 +486,10 @@ def main():
         elif action == "send_report":
             with st.spinner("正在生成并发送报告..."):
                 try:
-                    content = build_daily_report(wecom_action["report_date"])
+                    content = build_daily_report(
+                        wecom_action["report_date"],
+                        ai_config=get_config_defaults(),
+                    )
                     result = send_wecom_report(content, wecom_action["config"])
                     st.success("✅ 报告已发送到企业微信")
                     with st.expander("发送结果"):
