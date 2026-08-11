@@ -47,6 +47,7 @@ export function AiWecomPage() {
   const [report, setReport] = useState("")
   const [reportLoading, setReportLoading] = useState(false)
   const [reportDate, setReportDate] = useState(new Date().toISOString().split("T")[0])
+  const [wecomSendLoading, setWecomSendLoading] = useState(false)
   const [message, setMessage] = useState("")
   const [activeTab, setActiveTab] = useState("ai-config")
 
@@ -116,11 +117,16 @@ export function AiWecomPage() {
   }
 
   const handleWecomSend = async () => {
+    if (wecomSendLoading) return
+    setWecomSendLoading(true)
+    setMessage("")
     try {
       const res = await sendWecomReportByPlatform(platform, reportDate, wecomConfig)
       setMessage(`企微发送结果：${res.status || JSON.stringify(res)}`)
     } catch (err: any) {
       setMessage(err.message)
+    } finally {
+      setWecomSendLoading(false)
     }
   }
 
@@ -154,7 +160,7 @@ export function AiWecomPage() {
       {message && (
         <div
           className={`text-sm p-3 rounded-md ${
-            message.includes("成功") || message.includes("保存") || message.includes("连接") || message.includes("发送")
+            message.includes("成功") || message.includes("保存") || message.includes("连接") || message.startsWith("企微发送结果")
               ? "bg-green-100 text-green-800"
               : "bg-destructive/10 text-destructive"
           }`}
@@ -322,8 +328,9 @@ export function AiWecomPage() {
                     <Label>报告日期</Label>
                     <Input type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} />
                   </div>
-                  <Button onClick={handleWecomSend}>
-                    <Send className="h-4 w-4 mr-1" /> 发送日报
+                  <Button onClick={handleWecomSend} disabled={wecomSendLoading}>
+                    <Send className={`h-4 w-4 mr-1 ${wecomSendLoading ? "animate-pulse" : ""}`} />
+                    {wecomSendLoading ? "发送中..." : "发送日报"}
                   </Button>
                 </div>
               </CardContent>

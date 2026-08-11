@@ -1,9 +1,13 @@
+import datetime
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from fastapi import HTTPException
+
 import wecom
+from routers import wecom as wecom_router
 
 
 class WeComChatIdTests(unittest.TestCase):
@@ -38,6 +42,18 @@ class WeComChatIdTests(unittest.TestCase):
                 loaded = wecom.load_wecom_config()
         self.assertEqual(loaded["chat_id"], "new-chat")
         self.assertEqual(loaded["chatid"], "new-chat")
+
+    def test_frequency_limit_is_returned_as_actionable_429(self):
+        request = wecom_router.SendReportRequest(
+            report_date=datetime.date(2026, 8, 11),
+            config={},
+        )
+        error = RuntimeError("aibot send msg frequency limit exceeded (errcode=846607)")
+        with patch.object(wecom_router.services, "send_wecom_report_service", side_effect=error):
+            with self.assertRaises(HTTPException) as raised:
+                wecom_router.send_report(request, _={})
+        self.assertEqual(raised.exception.status_code, 429)
+        self.assertIn("发送频率受限", raised.exception.detail)
 
 
 if __name__ == "__main__":

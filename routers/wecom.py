@@ -1,7 +1,7 @@
 import datetime
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 import services
@@ -46,4 +46,13 @@ def send_report(
     req: SendReportRequest,
     _: dict = Depends(require_page("ai_wecom")),
 ):
-    return services.send_wecom_report_service(req.report_date, req.config)
+    try:
+        return services.send_wecom_report_service(req.report_date, req.config)
+    except RuntimeError as exc:
+        # 企业微信智能机器人频控不应显示成泛化 500，避免用户立即重复点击。
+        if "errcode=846607" in str(exc) or "frequency limit exceeded" in str(exc):
+            raise HTTPException(
+                status_code=429,
+                detail="企业微信发送频率受限，刚才的请求可能已经发送成功，请等待约 1 分钟后再试。",
+            ) from exc
+        raise
