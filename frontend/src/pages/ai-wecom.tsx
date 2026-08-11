@@ -49,12 +49,14 @@ export function AiWecomPage() {
   const [reportDate, setReportDate] = useState(new Date().toISOString().split("T")[0])
   const [wecomSendLoading, setWecomSendLoading] = useState(false)
   const [message, setMessage] = useState("")
+  const [messageKind, setMessageKind] = useState<"success" | "error">("success")
   const [activeTab, setActiveTab] = useState("ai-config")
 
   const supported = platform !== "wechat"
 
   useEffect(() => {
     setMessage("")
+    setMessageKind("success")
     setReport("")
     setStoreName("")
     getStores(platform).then(setStores)
@@ -78,8 +80,10 @@ export function AiWecomPage() {
   const handleAiSave = async () => {
     try {
       await updateAiConfigByPlatform(platform, aiConfig)
+      setMessageKind("success")
       setMessage("AI 配置已保存")
     } catch (err: any) {
+      setMessageKind("error")
       setMessage(err.message)
     }
   }
@@ -87,8 +91,10 @@ export function AiWecomPage() {
   const handleAiTest = async () => {
     try {
       const res = await testAiByPlatform(platform, aiConfig)
+      setMessageKind("success")
       setMessage(`AI 测试连接：${res.status || JSON.stringify(res)}`)
     } catch (err: any) {
+      setMessageKind("error")
       setMessage(err.message)
     }
   }
@@ -101,6 +107,7 @@ export function AiWecomPage() {
       const res = await generateAiReportByPlatform(platform, storeName, startDate, endDate, aiConfig)
       setReport(res.report || res.content || JSON.stringify(res, null, 2))
     } catch (err: any) {
+      setMessageKind("error")
       setMessage(err.message)
     } finally {
       setReportLoading(false)
@@ -110,8 +117,10 @@ export function AiWecomPage() {
   const handleWecomSave = async () => {
     try {
       await updateWecomConfigByPlatform(platform, wecomConfig)
+      setMessageKind("success")
       setMessage("企微配置已保存")
     } catch (err: any) {
+      setMessageKind("error")
       setMessage(err.message)
     }
   }
@@ -122,8 +131,10 @@ export function AiWecomPage() {
     setMessage("")
     try {
       const res = await sendWecomReportByPlatform(platform, reportDate, wecomConfig)
+      setMessageKind("success")
       setMessage(`企微发送结果：${res.status || JSON.stringify(res)}`)
     } catch (err: any) {
+      setMessageKind("error")
       setMessage(err.message)
     } finally {
       setWecomSendLoading(false)
@@ -160,9 +171,7 @@ export function AiWecomPage() {
       {message && (
         <div
           className={`text-sm p-3 rounded-md ${
-            message.includes("成功") || message.includes("保存") || message.includes("连接") || message.startsWith("企微发送结果")
-              ? "bg-green-100 text-green-800"
-              : "bg-destructive/10 text-destructive"
+            messageKind === "success" ? "bg-green-100 text-green-800" : "bg-destructive/10 text-destructive"
           }`}
         >
           {message}
