@@ -94,6 +94,16 @@ npm run dev
 8. 进入「知识助手」检索课程资料，或选择店铺和日期范围后结合真实经营数据进行分析
 9. 主账号可在「用户管理」中按平台和页面为子账号授权
 
+### 企微日报定时发送
+
+服务器可通过以下 cron 每天北京时间 10:30 自动生成并发送昨天的拼多多全店日报：
+
+```cron
+30 10 * * * cd /home/ubuntu/pdd_kpi && ./venv/bin/python daily_wecom_job.py >> /home/ubuntu/pdd_kpi/data/wecom_daily_cron.log 2>&1
+```
+
+任务只会在发送成功后记录当天状态，同一报告日期重复执行时会自动跳过。部署或调试时可使用 `./venv/bin/python daily_wecom_job.py --dry-run` 验证生成过程而不发送企微消息。
+
 ---
 
 ## 运营知识助手
