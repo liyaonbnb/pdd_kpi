@@ -15,6 +15,7 @@ import {
   generateAiReportByPlatform,
   getWecomConfigByPlatform,
   updateWecomConfigByPlatform,
+  previewWecomReportByPlatform,
   sendWecomReportByPlatform,
   type Store,
 } from "@/api/client"
@@ -47,7 +48,11 @@ export function AiWecomPage() {
   const [report, setReport] = useState("")
   const [reportLoading, setReportLoading] = useState(false)
   const [reportDate, setReportDate] = useState(new Date().toISOString().split("T")[0])
+  const [wecomPreviewLoading, setWecomPreviewLoading] = useState(false)
   const [wecomSendLoading, setWecomSendLoading] = useState(false)
+  const [wecomDraftId, setWecomDraftId] = useState("")
+  const [wecomDraftContent, setWecomDraftContent] = useState("")
+  const [wecomDraftSent, setWecomDraftSent] = useState(false)
   const [message, setMessage] = useState("")
   const [messageKind, setMessageKind] = useState<"success" | "error">("success")
   const [activeTab, setActiveTab] = useState("ai-config")
@@ -59,6 +64,9 @@ export function AiWecomPage() {
     setMessageKind("success")
     setReport("")
     setStoreName("")
+    setWecomDraftId("")
+    setWecomDraftContent("")
+    setWecomDraftSent(false)
     getStores(platform).then(setStores)
     if (supported) {
       getAiConfigByPlatform(platform).then(setAiConfig)
@@ -125,12 +133,46 @@ export function AiWecomPage() {
     }
   }
 
+  const handleReportDateChange = (value: string) => {
+    setReportDate(value)
+    setWecomDraftId("")
+    setWecomDraftContent("")
+    setWecomDraftSent(false)
+  }
+
+  const handleWecomPreview = async () => {
+    if (wecomPreviewLoading || wecomSendLoading || !reportDate) return
+    setWecomPreviewLoading(true)
+    setWecomDraftId("")
+    setWecomDraftContent("")
+    setWecomDraftSent(false)
+    setMessage("")
+    try {
+      const draft = await previewWecomReportByPlatform(platform, reportDate)
+      setWecomDraftId(draft.draft_id)
+      setWecomDraftContent(draft.content)
+      setMessageKind("success")
+      setMessage("日报已生成，请确认预览内容后再发送到企微")
+    } catch (err: any) {
+      setMessageKind("error")
+      setMessage(err.message)
+    } finally {
+      setWecomPreviewLoading(false)
+    }
+  }
+
   const handleWecomSend = async () => {
-    if (wecomSendLoading) return
+    if (wecomSendLoading || wecomPreviewLoading || wecomDraftSent) return
+    if (!wecomDraftId) {
+      setMessageKind("error")
+      setMessage("请先点击“生成日报”，确认预览后再发送")
+      return
+    }
     setWecomSendLoading(true)
     setMessage("")
     try {
-      const res = await sendWecomReportByPlatform(platform, reportDate, wecomConfig)
+      const res = await sendWecomReportByPlatform(platform, reportDate, wecomConfig, wecomDraftId)
+      setWecomDraftSent(true)
       setMessageKind("success")
       setMessage(`企微发送结果：${res.status || JSON.stringify(res)}`)
     } catch (err: any) {
@@ -335,13 +377,30 @@ export function AiWecomPage() {
                 <div className="flex items-end gap-4">
                   <div className="space-y-2 w-64">
                     <Label>报告日期</Label>
-                    <Input type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} />
+                    <Input type="date" value={reportDate} onChange={(e) => handleReportDateChange(e.target.value)} />
                   </div>
-                  <Button onClick={handleWecomSend} disabled={wecomSendLoading}>
+                  <Button variant="outline" onClick={handleWecomPreview} disabled={wecomPreviewLoading || wecomSendLoading}>
+                    <Sparkles className={`h-4 w-4 mr-1 ${wecomPreviewLoading ? "animate-pulse" : ""}`} />
+                    {wecomPreviewLoading ? "生成中..." : "生成日报"}
+                  </Button>
+                  <Button onClick={handleWecomSend} disabled={wecomSendLoading || wecomPreviewLoading || !wecomDraftId || wecomDraftSent}>
                     <Send className={`h-4 w-4 mr-1 ${wecomSendLoading ? "animate-pulse" : ""}`} />
-                    {wecomSendLoading ? "发送中..." : "发送日报"}
+                    {wecomDraftSent ? "已发送" : wecomSendLoading ? "发送中..." : "发送到企微"}
                   </Button>
                 </div>
+                {wecomDraftContent && (
+                  <Card className="border-dashed">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">日报预览</CardTitle>
+                      <p className="text-xs text-muted-foreground">内容已生成并保存 30 分钟，发送时不会重新生成。</p>
+                    </CardHeader>
+                    <CardContent>
+                      <pre className="max-h-[520px] overflow-auto whitespace-pre-wrap rounded-md bg-muted/50 p-4 text-sm leading-6">
+                        {wecomDraftContent}
+                      </pre>
+                    </CardContent>
+                  </Card>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

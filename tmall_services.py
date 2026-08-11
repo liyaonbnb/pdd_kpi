@@ -12,6 +12,7 @@ import pandas as pd
 
 import tmall_ai_analyzer as _tmall_ai
 import wecom as _wecom_sender
+from wecom_report_drafts import create_report_draft, get_report_draft, mark_report_draft_sent
 from tmall_loader import read_order_file, read_promotion_file
 from tmall_metrics import aggregate_product_metrics, build_product_metrics_from_orders, compute_overall_kpis
 from tmall_cost_manager import apply_costs_to_metrics, compute_cost_kpis, refresh_global_cost_codes
@@ -518,8 +519,24 @@ def update_tmall_wecom_config(config: Dict[str, Any]) -> Dict[str, Any]:
     return config
 
 
-def send_tmall_wecom_report(report_date: datetime.date, config: Dict[str, Any]) -> Dict[str, Any]:
+def preview_tmall_wecom_report(report_date: datetime.date) -> Dict[str, Any]:
     from tmall_report_builder import build_daily_report
-
     content = build_daily_report(report_date)
-    return _wecom_sender.send_wecom_report(content=content, config=config)
+    return create_report_draft(content, report_date.strftime("%Y-%m-%d"), platform="tmall")
+
+
+def send_tmall_wecom_report(
+    report_date: datetime.date,
+    config: Dict[str, Any],
+    draft_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    if draft_id:
+        draft = get_report_draft(draft_id, report_date.strftime("%Y-%m-%d"), platform="tmall")
+        content = draft["content"]
+    else:
+        from tmall_report_builder import build_daily_report
+        content = build_daily_report(report_date)
+    result = _wecom_sender.send_wecom_report(content=content, config=config)
+    if draft_id:
+        mark_report_draft_sent(draft_id)
+    return result

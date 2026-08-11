@@ -510,15 +510,30 @@ export async function updateWecomConfigByPlatform(platform: string, config: Reco
   return res.data
 }
 
-export async function sendWecomReportByPlatform(platform: string, reportDate: string, config: Record<string, any>) {
+export async function previewWecomReportByPlatform(platform: string, reportDate: string) {
+  const prefix = wecomPrefix(platform)
+  if (prefix === "/wecom") {
+    const res = await api.post(`${prefix}/preview`, null, { params: { report_date: reportDate } })
+    return res.data as { draft_id: string; report_date: string; content: string; created_at: string; expires_at: string }
+  }
+  const res = await api.post(`${prefix}/preview`, null, { params: { report_date: reportDate } })
+  return res.data as { draft_id: string; report_date: string; content: string; created_at: string; expires_at: string }
+}
+
+export async function sendWecomReportByPlatform(
+  platform: string,
+  reportDate: string,
+  config: Record<string, any>,
+  draftId?: string,
+) {
   const prefix = wecomPrefix(platform)
   if (prefix.startsWith("/douyin") || prefix.startsWith("/tmall")) {
     const res = await api.post(`${prefix}/send`, config, {
-      params: { report_date: reportDate },
+      params: { report_date: reportDate, draft_id: draftId },
     })
     return res.data
   }
-  const res = await api.post(`${prefix}/send`, { report_date: reportDate, config })
+  const res = await api.post(`${prefix}/send`, { report_date: reportDate, config, draft_id: draftId })
   return res.data
 }
 

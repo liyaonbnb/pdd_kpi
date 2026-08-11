@@ -18,6 +18,7 @@ class ListenRequest(BaseModel):
 class SendReportRequest(BaseModel):
     report_date: datetime.date
     config: Dict[str, Any]
+    draft_id: Optional[str] = None
 
 
 @router.get("/config", response_model=Dict[str, Any])
@@ -41,13 +42,23 @@ def listen(
     return services.listen_wecom(req.config, req.timeout)
 
 
+@router.post("/preview", response_model=Dict[str, Any])
+def preview_report(
+    report_date: datetime.date,
+    _: dict = Depends(require_page("ai_wecom")),
+):
+    return services.preview_wecom_report_service(report_date)
+
+
 @router.post("/send", response_model=Dict[str, Any])
 def send_report(
     req: SendReportRequest,
     _: dict = Depends(require_page("ai_wecom")),
 ):
     try:
-        return services.send_wecom_report_service(req.report_date, req.config)
+        return services.send_wecom_report_service(req.report_date, req.config, req.draft_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         # 企业微信智能机器人频控不应显示成泛化 500，避免用户立即重复点击。
         if "errcode=846607" in str(exc) or "frequency limit exceeded" in str(exc):

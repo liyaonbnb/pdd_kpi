@@ -63,6 +63,7 @@ from config_manager import load_config, save_config, get_config_defaults
 from ai_analyzer import generate_ai_report
 from api_client import test_connection
 from wecom import send_wecom_report, save_wecom_config, listen_wecom_chatid
+from wecom_report_drafts import create_report_draft, get_report_draft, mark_report_draft_sent
 from report_builder import build_daily_report
 from import_batches import (
     IMPORT_LOCK,
@@ -1268,9 +1269,25 @@ def listen_wecom(config: Dict[str, Any], timeout: int = 60) -> Optional[str]:
     )
 
 
-def send_wecom_report_service(report_date: datetime.date, config: Dict[str, Any]) -> Dict[str, Any]:
+def preview_wecom_report_service(report_date: datetime.date) -> Dict[str, Any]:
     content = build_daily_report(report_date, ai_config=get_config_defaults())
+    return create_report_draft(content, report_date.strftime("%Y-%m-%d"), platform="pdd")
+
+
+def send_wecom_report_service(
+    report_date: datetime.date,
+    config: Dict[str, Any],
+    draft_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    if draft_id:
+        draft = get_report_draft(draft_id, report_date.strftime("%Y-%m-%d"), platform="pdd")
+        content = draft["content"]
+    else:
+        # 兼容旧客户端：没有草稿 ID 时仍允许一次性生成并发送。
+        content = build_daily_report(report_date, ai_config=get_config_defaults())
     result = send_wecom_report(content, config)
+    if draft_id:
+        mark_report_draft_sent(draft_id)
     return result
 
 

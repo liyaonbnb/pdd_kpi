@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 import wecom as wecom_sender
+from wecom_report_drafts import create_report_draft, get_report_draft, mark_report_draft_sent
 
 from douyin_loader import read_order_file, read_promotion_file
 from douyin_metrics import aggregate_product_metrics, build_product_metrics_from_orders, compute_overall_kpis
@@ -467,10 +468,27 @@ def update_douyin_wecom_config(config: Dict[str, Any]) -> Dict[str, Any]:
     return config
 
 
-def send_douyin_wecom_report(report_date: datetime.date, config: Dict[str, Any]) -> Dict[str, Any]:
+def preview_douyin_wecom_report(report_date: datetime.date) -> Dict[str, Any]:
     from douyin_report_builder import build_daily_report as build_douyin_daily_report
     content = build_douyin_daily_report(report_date)
-    return wecom_sender.send_wecom_report(content=content, config=config)
+    return create_report_draft(content, report_date.strftime("%Y-%m-%d"), platform="douyin")
+
+
+def send_douyin_wecom_report(
+    report_date: datetime.date,
+    config: Dict[str, Any],
+    draft_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    if draft_id:
+        draft = get_report_draft(draft_id, report_date.strftime("%Y-%m-%d"), platform="douyin")
+        content = draft["content"]
+    else:
+        from douyin_report_builder import build_daily_report as build_douyin_daily_report
+        content = build_douyin_daily_report(report_date)
+    result = wecom_sender.send_wecom_report(content=content, config=config)
+    if draft_id:
+        mark_report_draft_sent(draft_id)
+    return result
 
 
 def get_douyin_records(store_name: Optional[str] = None) -> List[Dict[str, Any]]:
