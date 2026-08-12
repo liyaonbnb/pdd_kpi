@@ -6,6 +6,28 @@ import report_builder
 
 
 class ReportBuilderTests(unittest.TestCase):
+    @patch("report_builder.aggregate_product_metrics")
+    @patch("report_builder.load_daily_data")
+    @patch("report_builder.list_available_dates", return_value=["2026-08-11"])
+    def test_empty_daily_metrics_are_treated_as_missing_data(
+        self,
+        _available_dates,
+        load_daily_data,
+        aggregate_product_metrics,
+    ):
+        import pandas as pd
+
+        load_daily_data.return_value = (pd.DataFrame(), pd.DataFrame())
+
+        result = report_builder._load_store_metrics_for_range(
+            "空数据店铺",
+            datetime.date(2026, 8, 11),
+            datetime.date(2026, 8, 11),
+        )
+
+        self.assertIsNone(result)
+        aggregate_product_metrics.assert_not_called()
+
     @patch("report_builder.list_available_stores", return_value=["旧数据店铺"])
     @patch("report_builder.list_store_names", return_value=["店铺A", "店铺B"])
     @patch("report_builder._build_store_summary")

@@ -34,12 +34,14 @@ def _load_store_metrics_for_range(store_name: str, start_date, end_date) -> Opti
     for d in selected:
         try:
             df, _ = load_daily_data(d, store_name)
-            dfs.append(df)
+            if df is not None and not df.empty:
+                dfs.append(df)
         except Exception:
             continue
     if not dfs:
         return None
-    return aggregate_product_metrics(dfs)
+    aggregated = aggregate_product_metrics(dfs)
+    return aggregated if aggregated is not None and not aggregated.empty else None
 
 
 def _build_store_summary(store_name: str, report_date: datetime.date) -> Dict:
