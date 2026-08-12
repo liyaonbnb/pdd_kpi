@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useSearchParams } from "react-router-dom"
-import { Bot, MessageCircle, Save, Send, Sparkles, TestTube } from "lucide-react"
+import { Bot, CalendarClock, MessageCircle, RefreshCw, Save, Send, Sparkles, TestTube } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -17,6 +18,8 @@ import {
   updateWecomConfigByPlatform,
   previewWecomReportByPlatform,
   sendWecomReportByPlatform,
+  getDailyWecomScheduleStatus,
+  type DailyWecomScheduleStatus,
   type Store,
 } from "@/api/client"
 
@@ -28,6 +31,25 @@ const PLATFORM_OPTIONS: { key: Platform; label: string }[] = [
   { key: "tmall", label: "天猫" },
   { key: "wechat", label: "微信小店" },
 ]
+
+const SCHEDULE_STATUS_LABELS: Record<DailyWecomScheduleStatus["last_status"], string> = {
+  sent: "发送成功",
+  failed: "执行失败",
+  skipped: "已跳过",
+  never: "尚未执行",
+}
+
+function formatScheduleDate(value: string | null) {
+  if (!value) return "—"
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(value))
+}
 
 export function AiWecomPage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -53,11 +75,27 @@ export function AiWecomPage() {
   const [wecomDraftId, setWecomDraftId] = useState("")
   const [wecomDraftContent, setWecomDraftContent] = useState("")
   const [wecomDraftSent, setWecomDraftSent] = useState(false)
+  const [scheduleStatus, setScheduleStatus] = useState<DailyWecomScheduleStatus | null>(null)
+  const [scheduleLoading, setScheduleLoading] = useState(false)
+  const [scheduleError, setScheduleError] = useState("")
   const [message, setMessage] = useState("")
   const [messageKind, setMessageKind] = useState<"success" | "error">("success")
   const [activeTab, setActiveTab] = useState("ai-config")
 
   const supported = platform !== "wechat"
+
+  const loadScheduleStatus = useCallback(async () => {
+    if (platform !== "pdd") return
+    setScheduleLoading(true)
+    setScheduleError("")
+    try {
+      setScheduleStatus(await getDailyWecomScheduleStatus())
+    } catch (err: any) {
+      setScheduleError(err.message || "定时任务状态加载失败")
+    } finally {
+      setScheduleLoading(false)
+    }
+  }, [platform])
 
   useEffect(() => {
     setMessage("")
@@ -75,7 +113,13 @@ export function AiWecomPage() {
       setAiConfig({})
       setWecomConfig({})
     }
-  }, [platform])
+  }, [platform, supported])
+
+  useEffect(() => {
+    if (platform === "pdd" && activeTab === "wecom-send") {
+      loadScheduleStatus()
+    }
+  }, [platform, activeTab, loadScheduleStatus])
 
   const updateAi = (key: string, value: any) => {
     setAiConfig((prev) => ({ ...prev, [key]: value }))
@@ -374,7 +418,79 @@ export function AiWecomPage() {
                 <CardTitle>发送日报</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex items-end gap-4">
+                {platform === "pdd" && (
+                  <section className="rounded-md border bg-muted/30 p-4" aria-labelledby="daily-schedule-title">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <CalendarClock className="h-4 w-4" />
+                          <h4 id="daily-schedule-title" className="text-sm font-semibold">自动日报任务</h4>
+                          {scheduleStatus && (
+                            <Badge variant={scheduleStatus.enabled ? "secondary" : "destructive"}>
+                              {scheduleStatus.enabled ? "已启用" : "未启用"}
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">拼多多全店日报自动发送状态</p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={loadScheduleStatus}
+                        disabled={scheduleLoading}
+                        title="刷新定时任务状态"
+                      >
+                        <RefreshCw className={`h-4 w-4 ${scheduleLoading ? "animate-spin" : ""}`} />
+                        刷新
+                      </Button>
+                    </div>
+
+                    {scheduleError ? (
+                      <div className="mt-3 text-sm text-destructive">{scheduleError}</div>
+                    ) : scheduleStatus ? (
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <div>
+                          <div className="text-xs text-muted-foreground">执行时间</div>
+                          <div className="mt-1 text-sm font-medium">每天 {scheduleStatus.schedule_time}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-muted-foreground">下次执行</div>
+                          <div className="mt-1 text-sm font-medium">{formatScheduleDate(scheduleStatus.next_run_at)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-muted-foreground">上次结果</div>
+                          <div className="mt-1 flex items-center gap-2 text-sm font-medium">
+                            <Badge
+                              variant={
+                                scheduleStatus.last_status === "failed"
+                                  ? "destructive"
+                                  : scheduleStatus.last_status === "sent"
+                                    ? "secondary"
+                                    : "outline"
+                              }
+                            >
+                              {SCHEDULE_STATUS_LABELS[scheduleStatus.last_status]}
+                            </Badge>
+                            <span>{formatScheduleDate(scheduleStatus.last_run_at)}</span>
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-muted-foreground">数据日期</div>
+                          <div className="mt-1 text-sm font-medium">{scheduleStatus.last_data_date || "—"}</div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-3 text-sm text-muted-foreground">正在读取任务状态...</div>
+                    )}
+
+                    {scheduleStatus?.last_error && (
+                      <div className="mt-3 rounded border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                        上次失败原因：{scheduleStatus.last_error}
+                      </div>
+                    )}
+                  </section>
+                )}
+                <div className="flex flex-wrap items-end gap-4">
                   <div className="space-y-2 w-64">
                     <Label>报告日期</Label>
                     <Input type="date" value={reportDate} onChange={(e) => handleReportDateChange(e.target.value)} />

@@ -574,6 +574,24 @@ export async function previewWecomReportByPlatform(platform: string, reportDate:
   return res.data as { draft_id: string; report_date: string; content: string; created_at: string; expires_at: string }
 }
 
+export type DailyWecomScheduleStatus = {
+  enabled: boolean
+  schedule: string
+  schedule_time: string
+  timezone: string
+  next_run_at: string
+  last_status: "sent" | "failed" | "skipped" | "never"
+  last_run_at: string | null
+  last_report_date: string | null
+  last_data_date: string | null
+  last_error: string | null
+}
+
+export async function getDailyWecomScheduleStatus() {
+  const res = await api.get("/wecom/schedule-status")
+  return res.data as DailyWecomScheduleStatus
+}
+
 export async function sendWecomReportByPlatform(
   platform: string,
   reportDate: string,

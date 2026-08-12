@@ -1,6 +1,7 @@
 import datetime
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -73,7 +74,27 @@ class DailyWeComJobTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "send failed"):
                 daily_wecom_job.run_daily_wecom_job(datetime.date(2026, 8, 11))
-            self.assertFalse(daily_wecom_job.STATE_FILE.exists())
+            state = json.loads(daily_wecom_job.STATE_FILE.read_text(encoding="utf-8"))
+            self.assertEqual(state["last_status"], "failed")
+            self.assertEqual(state["last_error"], "send failed")
+            self.assertNotIn("2026-08-11", state.get("sent_report_dates", []))
+
+    def test_schedule_status_falls_back_to_cron_log(self):
+        with tempfile.TemporaryDirectory() as temp_dir, self._paths(temp_dir), patch.object(
+            daily_wecom_job, "LOG_FILE", Path(temp_dir) / "cron.log"
+        ), patch.object(daily_wecom_job, "_cron_is_enabled", return_value=True):
+            daily_wecom_job.LOG_FILE.write_text(
+                '{"status":"failed","error":"missing metric"}\n',
+                encoding="utf-8",
+            )
+
+            status = daily_wecom_job.get_daily_wecom_schedule_status()
+
+        self.assertTrue(status["enabled"])
+        self.assertEqual(status["schedule_time"], "10:30")
+        self.assertEqual(status["timezone"], "Asia/Shanghai")
+        self.assertEqual(status["last_status"], "failed")
+        self.assertEqual(status["last_error"], "missing metric")
 
     def test_corrupt_state_fails_closed_instead_of_resending(self):
         with tempfile.TemporaryDirectory() as temp_dir, self._paths(temp_dir), patch.object(

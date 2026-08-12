@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 import services
+from daily_wecom_job import get_daily_wecom_schedule_status
 from auth import require_master, require_page
 
 router = APIRouter()
@@ -48,6 +49,11 @@ def preview_report(
     _: dict = Depends(require_page("ai_wecom")),
 ):
     return services.preview_wecom_report_service(report_date)
+
+
+@router.get("/schedule-status", response_model=Dict[str, Any])
+def schedule_status(_: dict = Depends(require_page("ai_wecom"))):
+    return get_daily_wecom_schedule_status()
 
 
 @router.post("/send", response_model=Dict[str, Any])
