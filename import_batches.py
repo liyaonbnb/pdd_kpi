@@ -219,3 +219,21 @@ def invalidate_store_batches(store_name: str, actor: str, reason: str) -> None:
             changed = True
     if changed:
         _write_index(records)
+
+
+def invalidate_batches_for_date(store_name: str, date_str: str, actor: str, reason: str) -> None:
+    """仅让包含指定日期的成功批次失效，保留其他日期批次的可追溯性。"""
+    records = _read_index()
+    changed = False
+    for record in records:
+        if record.get("store_name") != store_name or record.get("status") != "imported":
+            continue
+        if date_str not in (record.get("affected_dates") or []):
+            continue
+        record["status"] = "invalidated"
+        record["invalidated_at"] = _now()
+        record["invalidated_by"] = actor
+        record["invalidated_reason"] = reason
+        changed = True
+    if changed:
+        _write_index(records)

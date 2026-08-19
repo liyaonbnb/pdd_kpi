@@ -242,6 +242,17 @@ def load_daily_promo(date, store_name: Optional[str] = None) -> pd.DataFrame:
         raise FileNotFoundError(f"未找到 {store_name or '默认店铺'} {date_str} 的推广文件")
 
 
+def delete_daily_promo(store_name: Optional[str], date) -> None:
+    """删除某店铺某日的原始推广文件，不影响订单文件。"""
+    init_storage()
+    store_str = _store_to_str(store_name)
+    date_str = _date_to_str(date)
+    for extension in ("parquet", "csv"):
+        path = PROCESSED_DIR / f"promo_{store_str}_{date_str}.{extension}"
+        if path.exists():
+            path.unlink()
+
+
 def delete_daily_data(store_name: Optional[str], date):
     """删除某日某店铺的数据文件和 meta 记录"""
     init_storage()

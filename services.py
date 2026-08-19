@@ -5,6 +5,8 @@
 import io
 import datetime
 import hashlib
+import json
+from pathlib import Path
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -57,6 +59,7 @@ from storage import (
     list_store_records,
     record_exists,
     delete_daily_data,
+    delete_daily_promo,
 )
 from store_manager import add_store, rename_store, delete_store, list_stores, update_store_platform
 from config_manager import load_config, save_config, get_config_defaults
@@ -70,6 +73,7 @@ from import_batches import (
     begin_batch,
     find_duplicate_batch,
     invalidate_store_batches,
+    invalidate_batches_for_date,
     list_batches,
     restore_batch_snapshot,
     rollback_batch,
@@ -1635,3 +1639,153 @@ def delete_record(
         invalidate_store_batches(store_name, actor, f"删除整日数据 {_date_str(date)}")
         bump_data_version()
     return {"deleted": True, "store_name": store_name, "date": _date_str(date)}
+
+
+# ---------- 精确数据清理 ----------
+
+_CLEANUP_AUDIT_FILE = Path("data/cleanup_audit.jsonl")
+
+
+def _cleanup_counts(store_name: str, date_str: str) -> Dict[str, Any]:
+    """读取某店铺某日的可删除范围，不修改任何数据。"""
+    try:
+        orders = load_daily_orders(date_str, store_name)
+    except FileNotFoundError:
+        orders = pd.DataFrame()
+    try:
+        promo = load_daily_promo(date_str, store_name)
+    except FileNotFoundError:
+        promo = pd.DataFrame()
+    record = next(
+        (item for item in list_store_records(store_name) if item.get("date") == date_str),
+        {},
+    )
+    return {
+        "store_name": store_name,
+        "date": date_str,
+        "order_rows": int(len(orders)),
+        "promo_rows": int(len(promo)),
+        "product_rows": int(record.get("product_rows", 0)),
+        "style_rows": int(record.get("style_rows", 0)),
+        "has_orders": not orders.empty,
+        "has_promo": not promo.empty,
+    }
+
+
+def preview_cleanup(store_name: str, date: datetime.date) -> Dict[str, Any]:
+    return _cleanup_counts(store_name, _date_str(date))
+
+
+def _write_cleanup_audit(entry: Dict[str, Any]) -> None:
+    _CLEANUP_AUDIT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with _CLEANUP_AUDIT_FILE.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _empty_orders_frame() -> pd.DataFrame:
+    """给只有推广数据的日期提供可被统一处理器接受的空订单表。"""
+    return pd.DataFrame(
+        {
+            "order_id": pd.Series(dtype=object),
+            "product_id": pd.Series(dtype=object),
+            "style_id": pd.Series(dtype=object),
+            "merchant_code": pd.Series(dtype=object),
+            "product_name_raw": pd.Series(dtype=object),
+            "style_name_raw": pd.Series(dtype=object),
+            "order_status": pd.Series(dtype=object),
+            "aftersales_status": pd.Series(dtype=object),
+            "item_total": pd.Series(dtype=float),
+            "user_paid": pd.Series(dtype=float),
+            "merchant_income": pd.Series(dtype=float),
+            "quantity": pd.Series(dtype=float),
+        }
+    )
+
+
+def cleanup_daily_data(
+    store_name: str,
+    date: datetime.date,
+    cleanup_type: str,
+    actor: str = "unknown",
+) -> Dict[str, Any]:
+    """删除某店铺某日的订单、推广或整日数据，并重算剩余来源。"""
+    if cleanup_type not in {"orders", "promo", "all"}:
+        raise ValueError("清理类型必须是 orders、promo 或 all")
+
+    date_str = _date_str(date)
+    with IMPORT_LOCK:
+        before = _cleanup_counts(store_name, date_str)
+        if not before["has_orders"] and not before["has_promo"]:
+            raise ValueError(f"{store_name} {date_str} 没有可清理的数据")
+
+        try:
+            orders = load_daily_orders(date_str, store_name)
+        except FileNotFoundError:
+            orders = pd.DataFrame()
+        try:
+            promo = load_daily_promo(date_str, store_name)
+        except FileNotFoundError:
+            promo = pd.DataFrame()
+
+        if cleanup_type in {"orders", "all"}:
+            orders = orders.iloc[0:0].copy()
+        if cleanup_type in {"promo", "all"}:
+            promo = promo.iloc[0:0].copy()
+            delete_daily_promo(store_name, date_str)
+
+        if cleanup_type == "all":
+            delete_daily_data(store_name, date_str)
+        else:
+            # 保留另一数据源并重新计算当天指标；两者都空时清除整日文件。
+            if promo.empty and orders.empty:
+                delete_daily_data(store_name, date_str)
+            elif not promo.empty:
+                if orders.empty:
+                    orders = _empty_orders_frame()
+                merged, style_metrics, normalized_orders = match_promotion_and_orders(
+                    promo, orders, {}, {}, date=date_str
+                )
+                merged["store_name"] = store_name
+                style_metrics["store_name"] = store_name
+                normalized_orders["store_name"] = store_name
+                product_metrics = compute_product_metrics(merged)
+            elif not orders.empty:
+                # 没有推广数据时构造空的推广骨架，仍可重算订单侧指标。
+                promo = pd.DataFrame({"product_id": orders.get("product_id", pd.Series(dtype=object))})
+                if "style_id" in orders.columns:
+                    promo["style_id"] = orders["style_id"]
+                promo["product_name"] = orders.get("product_name_raw", "")
+                for col in ("promo_spend", "promo_gmv", "promo_orders", "exposure", "clicks"):
+                    promo[col] = 0
+                merged, style_metrics, normalized_orders = match_promotion_and_orders(
+                    promo, orders, {}, {}, date=date_str
+                )
+                merged["store_name"] = store_name
+                style_metrics["store_name"] = store_name
+                normalized_orders["store_name"] = store_name
+                product_metrics = compute_product_metrics(merged)
+            else:
+                product_metrics = pd.DataFrame()
+                style_metrics = pd.DataFrame()
+                normalized_orders = pd.DataFrame()
+            save_daily_data(
+                product_metrics, style_metrics, normalized_orders,
+                date=date_str, store_name=store_name,
+                meta={"cleanup_type": cleanup_type, "cleanup_by": actor},
+            )
+
+        invalidate_batches_for_date(store_name, date_str, actor, f"精确清理 {cleanup_type} {date_str}")
+        after = _cleanup_counts(store_name, date_str)
+        audit = {
+            "action": "cleanup",
+            "cleanup_type": cleanup_type,
+            "store_name": store_name,
+            "date": date_str,
+            "actor": actor,
+            "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
+            "before": before,
+            "after": after,
+        }
+        _write_cleanup_audit(audit)
+        bump_data_version()
+        return audit

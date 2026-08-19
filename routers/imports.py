@@ -116,3 +116,33 @@ def delete_record(
 ):
     authorize_store(user, store_name)
     return services.delete_record(store_name, date, user.get("sub", "unknown"))
+
+
+@router.get("/cleanup/preview", response_model=Dict[str, Any])
+def preview_cleanup(
+    store_name: str,
+    date: datetime.date,
+    user: dict = Depends(require_master),
+):
+    authorize_store(user, store_name)
+    return services.preview_cleanup(store_name, date)
+
+
+@router.post("/cleanup", response_model=Dict[str, Any])
+def cleanup_data(
+    store_name: str = Form(...),
+    date: datetime.date = Form(...),
+    cleanup_type: str = Form(...),
+    confirm_text: str = Form(...),
+    user: dict = Depends(require_master),
+):
+    authorize_store(user, store_name)
+    expected = f"{store_name} {date.isoformat()}"
+    if confirm_text != expected:
+        raise HTTPException(status_code=400, detail=f"请输入“{expected}”确认清理")
+    try:
+        return services.cleanup_daily_data(
+            store_name, date, cleanup_type, user.get("sub", "unknown")
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

@@ -108,6 +108,17 @@ export type ImportBatch = {
   rollback_reason: string
 }
 
+export type CleanupPreview = {
+  store_name: string
+  date: string
+  order_rows: number
+  promo_rows: number
+  product_rows: number
+  style_rows: number
+  has_orders: boolean
+  has_promo: boolean
+}
+
 export type Kpis = Record<string, number | null>
 
 export type AnalysisData = {
@@ -328,6 +339,25 @@ export async function getRecords(storeName?: string) {
     params: storeName ? { store_name: storeName } : {},
   })
   return res.data
+}
+
+export async function previewCleanup(storeName: string, date: string) {
+  const res = await api.get<CleanupPreview>("/imports/cleanup/preview", {
+    params: { store_name: storeName, date },
+  })
+  return res.data
+}
+
+export async function cleanupData(storeName: string, date: string, cleanupType: "orders" | "promo" | "all", confirmText: string) {
+  const formData = new FormData()
+  formData.append("store_name", storeName)
+  formData.append("date", date)
+  formData.append("cleanup_type", cleanupType)
+  formData.append("confirm_text", confirmText)
+  const res = await api.post("/imports/cleanup", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  })
+  return res.data as { cleanup_type: string; before: CleanupPreview; after: CleanupPreview }
 }
 
 export async function getDashboardSummary(startDate: string, endDate: string, storeNames?: string[]) {

@@ -22,14 +22,17 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { isMaster } from "@/api/auth"
 import {
   deleteRecord,
+  cleanupData,
   getImportBatches,
   getRecords,
   getStores,
   importData,
   previewImport,
+  previewCleanup,
   rollbackImportBatch,
   type ImportBatch,
   type ImportPreview,
+  type CleanupPreview,
   type Store,
 } from "@/api/client"
 
@@ -91,6 +94,12 @@ export function ImportPage() {
   const [loading, setLoading] = useState(false)
   const [busyBatch, setBusyBatch] = useState("")
   const [message, setMessage] = useState("")
+  const [cleanupOpen, setCleanupOpen] = useState(false)
+  const [cleanupStore, setCleanupStore] = useState("")
+  const [cleanupDate, setCleanupDate] = useState("")
+  const [cleanupType, setCleanupType] = useState<"orders" | "promo" | "all">("orders")
+  const [cleanupPreviewData, setCleanupPreviewData] = useState<CleanupPreview | null>(null)
+  const [cleanupLoading, setCleanupLoading] = useState(false)
   const master = isMaster()
 
   useEffect(() => {
@@ -100,6 +109,7 @@ export function ImportPage() {
 
   useEffect(() => {
     if (stores.length > 0 && !storeName) setStoreName(stores[0].name)
+    if (stores.length > 0 && !cleanupStore) setCleanupStore(stores[0].name)
   }, [stores, storeName])
 
   const fetchHistory = async () => {
@@ -195,6 +205,48 @@ export function ImportPage() {
       await fetchHistory()
     } catch (err: any) {
       setMessage(err.message)
+    }
+  }
+
+  const openCleanup = () => {
+    setCleanupStore(stores[0]?.name || storeName)
+    setCleanupDate("")
+    setCleanupType("orders")
+    setCleanupPreviewData(null)
+    setCleanupOpen(true)
+  }
+
+  const handleCleanupPreview = async () => {
+    if (!cleanupStore || !cleanupDate) {
+      setMessage("请选择店铺和日期")
+      return
+    }
+    setCleanupLoading(true)
+    try {
+      setCleanupPreviewData(await previewCleanup(cleanupStore, cleanupDate))
+    } catch (err: any) {
+      setMessage(err.message)
+    } finally {
+      setCleanupLoading(false)
+    }
+  }
+
+  const handleCleanup = async () => {
+    if (!cleanupPreviewData) return
+    const expected = `${cleanupStore} ${cleanupDate}`
+    const input = prompt(`此操作会删除选定范围并重算指标。请输入“${expected}”确认：`)
+    if (input !== expected) return
+    setCleanupLoading(true)
+    try {
+      await cleanupData(cleanupStore, cleanupDate, cleanupType, input)
+      setMessage(`已清理 ${cleanupStore} ${cleanupDate} 的${cleanupType === "orders" ? "订单" : cleanupType === "promo" ? "推广数据" : "整日数据"}`)
+      setCleanupOpen(false)
+      setCleanupPreviewData(null)
+      await fetchHistory()
+    } catch (err: any) {
+      setMessage(err.message)
+    } finally {
+      setCleanupLoading(false)
     }
   }
 
@@ -347,8 +399,14 @@ export function ImportPage() {
               <p className="text-xs text-muted-foreground">共 {batches.length} 条记录</p>
             </div>
           </div>
-          <div className="inline-flex w-fit rounded-md bg-zinc-100 p-0.5">
-            {batchFilters.map((filter) => (
+          <div className="flex flex-wrap items-center gap-2">
+            {master && (
+              <Button variant="outline" size="sm" onClick={openCleanup} className="gap-1.5">
+                <Trash2 className="h-3.5 w-3.5" />数据清理
+              </Button>
+            )}
+            <div className="inline-flex w-fit rounded-md bg-zinc-100 p-0.5">
+              {batchFilters.map((filter) => (
               <button
                 key={filter.value}
                 type="button"
@@ -357,7 +415,8 @@ export function ImportPage() {
               >
                 {filter.label}
               </button>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
 
@@ -401,6 +460,72 @@ export function ImportPage() {
           </TableBody>
         </Table>
       </section>
+
+      {master && cleanupOpen && (
+        <section className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4">
+            <div>
+              <h3 className="text-sm font-semibold text-zinc-950">数据清理中心</h3>
+              <p className="mt-0.5 text-xs text-muted-foreground">仅处理指定店铺指定日期，不影响其他日期。</p>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => setCleanupOpen(false)}>关闭</Button>
+          </div>
+          <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.8fr)]">
+            <div className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-zinc-700">店铺</Label>
+                  <Select value={cleanupStore} onChange={(e) => { setCleanupStore(e.target.value); setCleanupPreviewData(null) }}>
+                    <option value="">选择店铺</option>
+                    {stores.map((store) => <option key={store.id} value={store.name}>{store.name}</option>)}
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-zinc-700">日期</Label>
+                  <Input type="date" value={cleanupDate} onChange={(e) => { setCleanupDate(e.target.value); setCleanupPreviewData(null) }} />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-zinc-700">清理范围</Label>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {[
+                    ["orders", "仅订单", "保留推广数据"],
+                    ["promo", "仅推广", "保留订单数据"],
+                    ["all", "整日数据", "订单、推广、指标全部删除"],
+                  ].map(([value, label, desc]) => (
+                    <button key={value} type="button" onClick={() => { setCleanupType(value as typeof cleanupType); setCleanupPreviewData(null) }} className={`rounded-md border p-3 text-left transition-colors ${cleanupType === value ? "border-zinc-950 bg-zinc-950 text-white" : "border-zinc-200 hover:border-zinc-400"}`}>
+                      <div className="text-sm font-medium">{label}</div>
+                      <div className={`mt-1 text-[11px] ${cleanupType === value ? "text-zinc-300" : "text-muted-foreground"}`}>{desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <Button onClick={handleCleanupPreview} disabled={cleanupLoading || !cleanupStore || !cleanupDate} className="gap-1.5">
+                <FileCheck2 className="h-4 w-4" />检查影响范围
+              </Button>
+            </div>
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50/70 p-4">
+              <h4 className="text-sm font-semibold text-zinc-900">删除前预览</h4>
+              {!cleanupPreviewData ? (
+                <p className="mt-8 text-center text-xs text-muted-foreground">选择店铺和日期后检查</p>
+              ) : (
+                <div className="mt-4 space-y-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded border border-zinc-200 bg-white p-3"><div className="text-[11px] text-muted-foreground">订单行</div><div className="mt-1 text-xl font-semibold text-zinc-950">{cleanupPreviewData.order_rows}</div></div>
+                    <div className="rounded border border-zinc-200 bg-white p-3"><div className="text-[11px] text-muted-foreground">推广行</div><div className="mt-1 text-xl font-semibold text-zinc-950">{cleanupPreviewData.promo_rows}</div></div>
+                    <div className="rounded border border-zinc-200 bg-white p-3"><div className="text-[11px] text-muted-foreground">商品指标</div><div className="mt-1 text-xl font-semibold text-zinc-950">{cleanupPreviewData.product_rows}</div></div>
+                    <div className="rounded border border-zinc-200 bg-white p-3"><div className="text-[11px] text-muted-foreground">样式指标</div><div className="mt-1 text-xl font-semibold text-zinc-950">{cleanupPreviewData.style_rows}</div></div>
+                  </div>
+                  <p className="text-xs leading-5 text-amber-700">确认后会写入操作日志，并将相关导入批次标记为已失效。</p>
+                  <Button variant="destructive" onClick={handleCleanup} disabled={cleanupLoading || (!cleanupPreviewData.has_orders && !cleanupPreviewData.has_promo)} className="w-full gap-1.5">
+                    <Trash2 className="h-4 w-4" />确认清理
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
 
       {master && (
         <details className="group overflow-hidden rounded-lg border border-zinc-200 bg-white">
