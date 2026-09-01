@@ -1,4 +1,6 @@
 """V2 API for the isolated deployment environment.
+app.include_router(v1_compat.router)
+
 
 The API is additive and remains isolated from the legacy production database.
 Existing test-token access is retained while V2 account authentication is
@@ -29,6 +31,8 @@ except Exception:
     bcrypt = None
 
 from v2.local_workflow import run_workflow
+from v2 import v1_compat
+
 
 
 DATABASE_URL = os.getenv(
