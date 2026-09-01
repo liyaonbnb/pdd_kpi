@@ -253,6 +253,11 @@ class LegacyUsersImportIn(BaseModel):
     effective_to: str | None = None
 
 
+class LegacyLoginIn(BaseModel):
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=256)
+
+
 class ImportRowIn(BaseModel):
     order_id: str | None = None
     product_id: str | None = None
@@ -507,6 +512,43 @@ def _legacy_user_dict(row: tuple[Any, ...]) -> dict[str, Any]:
     }
 
 
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _issue_jwt(user: dict[str, Any]) -> str:
+    header = _b64url(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode("utf-8"))
+    payload = _b64url(json.dumps({
+        "sub": user["username"],
+        "role": user.get("role", "sub"),
+        "allowed_stores": user.get("allowed_stores", []),
+        "allowed_pages": user.get("allowed_pages", []),
+        "exp": int(time.time()) + 86400,
+    }, separators=(",", ":")).encode("utf-8"))
+    signature = _b64url(hmac.new(AUTH_SECRET.encode("utf-8"), f"{header}.{payload}".encode("ascii"), hashlib.sha256).digest())
+    return f"{header}.{payload}.{signature}"
+
+
+def _verify_jwt(token: str | None) -> dict[str, Any] | None:
+    if not token:
+        return None
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    header, payload, signature = parts
+    expected = _b64url(hmac.new(AUTH_SECRET.encode("utf-8"), f"{header}.{payload}".encode("ascii"), hashlib.sha256).digest())
+    if not hmac.compare_digest(expected, signature):
+        return None
+    try:
+        pad = (-len(payload)) % 4
+        decoded = base64.urlsafe_b64decode(payload + ("=" * pad))
+        claims = json.loads(decoded.decode("utf-8"))
+    except Exception:
+        return None
+    if claims.get("exp") and claims["exp"] < time.time():
+        return None
+    return claims
 def _load_v2_user(username: str) -> dict[str, Any] | None:
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.cursor() as cur:
@@ -575,6 +617,36 @@ def v2_me(authorization: str | None = Header(default=None), x_v2_test_token: str
         return {"username": "test-token", "role": "master", "allowed_stores": [], "allowed_pages": [], "is_active": True}
     token = authorization[7:] if authorization and authorization.lower().startswith("bearer ") else None
     claims = _verify_auth_token(token)
+    if not claims:
+        raise HTTPException(status_code=401, detail="登录已失效")
+    user = _load_v2_user(str(claims.get("sub") or ""))
+    if not user or not user["is_active"]:
+        raise HTTPException(status_code=401, detail="账号不可用")
+    return _safe_user(user)
+
+
+
+
+@app.post("/api/auth/login")
+def legacy_login(payload: LegacyLoginIn) -> dict[str, Any]:
+    if bcrypt is None:
+        raise HTTPException(status_code=503, detail="认证组件尚未安装")
+    user = _load_v2_user(payload.username)
+    if not user or not user["is_active"]:
+        raise HTTPException(status_code=401, detail="账号或密码错误")
+    try:
+        matched = bcrypt.checkpw(payload.password.encode("utf-8"), user["password_hash"].encode("utf-8"))
+    except Exception:
+        matched = False
+    if not matched:
+        raise HTTPException(status_code=401, detail="账号或密码错误")
+    return {"access_token": _issue_jwt(user), "token_type": "bearer", "user": _safe_user(user)}
+
+
+@app.get("/api/auth/me")
+def legacy_me(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    token = authorization[7:] if authorization and authorization.lower().startswith("bearer ") else None
+    claims = _verify_jwt(token)
     if not claims:
         raise HTTPException(status_code=401, detail="登录已失效")
     user = _load_v2_user(str(claims.get("sub") or ""))
