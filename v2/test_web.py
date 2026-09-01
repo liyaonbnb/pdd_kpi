@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 try:
@@ -31,8 +31,7 @@ async def proxy_api(request: Request, path: str):
     if httpx is None:
         from starlette.responses import JSONResponse
         return JSONResponse({"detail": "httpx not installed"}, status_code=503)
-    client = httpx.AsyncClient(base_url=API_BASE, timeout=60.0)
-    try:
+    async with httpx.AsyncClient(base_url=API_BASE, timeout=60.0) as client:
         method = request.method
         url = f"/api/{path}"
         if request.query_params:
@@ -44,9 +43,11 @@ async def proxy_api(request: Request, path: str):
             headers[key] = value
         body = await request.body()
         response = await client.request(method, url, headers=headers, content=body)
-        return StreamingResponse(response.aiter_raw(), status_code=response.status_code, headers=dict(response.headers))
-    finally:
-        await client.aclose()
+        # Drop hop-by-hop headers; FastAPI/Starlette will set correct content-length.
+        response_headers = dict(response.headers)
+        for key in ("content-length", "transfer-encoding", "connection", "content-encoding"):
+            response_headers.pop(key, None)
+        return Response(content=response.content, status_code=response.status_code, headers=response_headers)
 
 
 @app.get("/{path:path}")
@@ -55,3 +56,4 @@ def serve(path: str = ""):
     if candidate.is_relative_to(DIST.resolve()) and candidate.is_file():
         return FileResponse(candidate)
     return FileResponse(DIST / "index.html")
+
