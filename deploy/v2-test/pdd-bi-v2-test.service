@@ -1,0 +1,17 @@
+[Unit]
+Description=PDD BI V2 isolated test API
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/pdd_bi_v2_test
+EnvironmentFile=/etc/pdd-bi-v2-test.env
+ExecStart=/opt/pdd_bi_v2_test/venv/bin/uvicorn v2.test_api:app --host 0.0.0.0 --port 18000
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

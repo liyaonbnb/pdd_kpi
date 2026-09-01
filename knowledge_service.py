@@ -8,6 +8,7 @@ import shutil
 import sqlite3
 import threading
 from collections import Counter
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -68,7 +69,9 @@ def _parse_json(value: Optional[str], fallback: Any) -> Any:
 
 def get_knowledge_status() -> Dict[str, Any]:
     try:
-        with _connect() as connection:
+        # sqlite3.Connection 的上下文管理器只负责提交/回滚，不会自动 close。
+        # 用 closing 包住连接，避免知识库查询在进程退出时积累 ResourceWarning。
+        with closing(_connect()) as connection:
             metadata = dict(connection.execute("SELECT key, value FROM metadata"))
             counts = {
                 "documents": connection.execute("SELECT COUNT(1) FROM documents").fetchone()[0],
@@ -269,7 +272,7 @@ def search_knowledge(
     if not normalized:
         raise ValueError("检索问题不能为空")
     limit = max(1, min(limit, 20))
-    with _connect() as connection:
+    with closing(_connect()) as connection:
         if decision_only:
             results = _search_claims(connection, normalized, course_id, topic, True, limit)
         else:

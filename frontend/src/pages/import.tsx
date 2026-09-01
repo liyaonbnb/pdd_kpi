@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import {
   AlertTriangle,
   Check,
@@ -102,24 +102,24 @@ export function ImportPage() {
   const [cleanupLoading, setCleanupLoading] = useState(false)
   const master = isMaster()
 
-  useEffect(() => {
-    getStores("pdd").then(setStores)
-    void fetchHistory()
-  }, [])
-
-  useEffect(() => {
-    if (stores.length > 0 && !storeName) setStoreName(stores[0].name)
-    if (stores.length > 0 && !cleanupStore) setCleanupStore(stores[0].name)
-  }, [stores, storeName])
-
-  const fetchHistory = async () => {
+  const fetchHistory = useCallback(async () => {
     const [batchRows, dailyRows] = await Promise.all([
       getImportBatches(),
       master ? getRecords() : Promise.resolve([]),
     ])
     setBatches(batchRows)
     setRecords(dailyRows)
-  }
+  }, [master])
+
+  useEffect(() => {
+    getStores("pdd").then(setStores)
+    void fetchHistory()
+  }, [fetchHistory])
+
+  useEffect(() => {
+    if (stores.length > 0 && !storeName) setStoreName(stores[0].name)
+    if (stores.length > 0 && !cleanupStore) setCleanupStore(stores[0].name)
+  }, [stores, storeName, cleanupStore])
 
   const resetPreview = () => {
     setPreview(null)

@@ -6,6 +6,7 @@ __pycache__/
 *.pyc
 *.pyo
 data/
+v2/local_data/
 !knowledge/data/
 !knowledge/data/knowledge.db.gz
 *.log

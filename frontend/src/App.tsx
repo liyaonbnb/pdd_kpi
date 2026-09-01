@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useEffect, useRef, useState } from "react"
 import { BrowserRouter, Routes, Route, NavLink, useLocation, useNavigate } from "react-router-dom"
 import {
   LayoutDashboard,
@@ -25,7 +25,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Select } from "@/components/ui/select"
-import { useTheme } from "@/components/theme-provider"
+import { useTheme } from "@/components/theme-context"
 import { AuthGuard } from "@/components/auth-guard"
 import { canAccessPage, getCurrentUser, isMaster, logout } from "@/api/auth"
 import {
@@ -35,33 +35,36 @@ import {
   getTmallUnmappedCount,
   getWechatUnmappedCount,
 } from "@/api/client"
-import { LoginPage } from "@/pages/login"
-import { DashboardPage } from "@/pages/dashboard"
-import { StoresPage } from "@/pages/stores"
-import { ImportPage } from "@/pages/import"
-import { MetricsPage } from "@/pages/metrics"
-import { OrdersPage } from "@/pages/orders"
-import { CostsPage } from "@/pages/costs"
-import { AiWecomPage } from "@/pages/ai-wecom"
-import { UsersPage } from "@/pages/users"
-import { DouyinDashboardPage } from "@/pages/douyin-dashboard"
-import { DouyinImportPage } from "@/pages/douyin-import"
-import { DouyinMetricsPage } from "@/pages/douyin-metrics"
-import { DouyinOrdersPage } from "@/pages/douyin-orders"
-import { DouyinCostsPage } from "@/pages/douyin-costs"
-import { TmallDashboardPage } from "@/pages/tmall-dashboard"
-import { TmallImportPage } from "@/pages/tmall-import"
-import { TmallMetricsPage } from "@/pages/tmall-metrics"
-import { TmallOrdersPage } from "@/pages/tmall-orders"
-import { TmallCostsPage } from "@/pages/tmall-costs"
-import { WechatDashboardPage } from "@/pages/wechat-dashboard"
-import { WechatImportPage } from "@/pages/wechat-import"
-import { WechatMetricsPage } from "@/pages/wechat-metrics"
-import { WechatOrdersPage } from "@/pages/wechat-orders"
-import { WechatCostsPage } from "@/pages/wechat-costs"
-import { ChangePasswordPage } from "@/pages/change-password"
-import { KnowledgeAssistantPage } from "@/pages/knowledge-assistant"
-import { OperationsDailyPage } from "@/pages/operations-daily"
+
+// 页面按路由懒加载，避免首次打开总览时把所有平台页面和图表组件一次性打进主包。
+const LoginPage = lazy(async () => ({ default: (await import("@/pages/login")).LoginPage }))
+const DashboardPage = lazy(async () => ({ default: (await import("@/pages/dashboard")).DashboardPage }))
+const StoresPage = lazy(async () => ({ default: (await import("@/pages/stores")).StoresPage }))
+const ImportPage = lazy(async () => ({ default: (await import("@/pages/import")).ImportPage }))
+const MetricsPage = lazy(async () => ({ default: (await import("@/pages/metrics")).MetricsPage }))
+const OrdersPage = lazy(async () => ({ default: (await import("@/pages/orders")).OrdersPage }))
+const CostsPage = lazy(async () => ({ default: (await import("@/pages/costs")).CostsPage }))
+const AiWecomPage = lazy(async () => ({ default: (await import("@/pages/ai-wecom")).AiWecomPage }))
+const UsersPage = lazy(async () => ({ default: (await import("@/pages/users")).UsersPage }))
+const DouyinDashboardPage = lazy(async () => ({ default: (await import("@/pages/douyin-dashboard")).DouyinDashboardPage }))
+const DouyinImportPage = lazy(async () => ({ default: (await import("@/pages/douyin-import")).DouyinImportPage }))
+const DouyinMetricsPage = lazy(async () => ({ default: (await import("@/pages/douyin-metrics")).DouyinMetricsPage }))
+const DouyinOrdersPage = lazy(async () => ({ default: (await import("@/pages/douyin-orders")).DouyinOrdersPage }))
+const DouyinCostsPage = lazy(async () => ({ default: (await import("@/pages/douyin-costs")).DouyinCostsPage }))
+const TmallDashboardPage = lazy(async () => ({ default: (await import("@/pages/tmall-dashboard")).TmallDashboardPage }))
+const TmallImportPage = lazy(async () => ({ default: (await import("@/pages/tmall-import")).TmallImportPage }))
+const TmallMetricsPage = lazy(async () => ({ default: (await import("@/pages/tmall-metrics")).TmallMetricsPage }))
+const TmallOrdersPage = lazy(async () => ({ default: (await import("@/pages/tmall-orders")).TmallOrdersPage }))
+const TmallCostsPage = lazy(async () => ({ default: (await import("@/pages/tmall-costs")).TmallCostsPage }))
+const WechatDashboardPage = lazy(async () => ({ default: (await import("@/pages/wechat-dashboard")).WechatDashboardPage }))
+const WechatImportPage = lazy(async () => ({ default: (await import("@/pages/wechat-import")).WechatImportPage }))
+const WechatMetricsPage = lazy(async () => ({ default: (await import("@/pages/wechat-metrics")).WechatMetricsPage }))
+const WechatOrdersPage = lazy(async () => ({ default: (await import("@/pages/wechat-orders")).WechatOrdersPage }))
+const WechatCostsPage = lazy(async () => ({ default: (await import("@/pages/wechat-costs")).WechatCostsPage }))
+const ChangePasswordPage = lazy(async () => ({ default: (await import("@/pages/change-password")).ChangePasswordPage }))
+const KnowledgeAssistantPage = lazy(async () => ({ default: (await import("@/pages/knowledge-assistant")).KnowledgeAssistantPage }))
+const OperationsDailyPage = lazy(async () => ({ default: (await import("@/pages/operations-daily")).OperationsDailyPage }))
+const V2WorkbenchPage = lazy(async () => ({ default: (await import("@/pages/v2-workbench")).V2WorkbenchPage }))
 
 type Platform = "pdd" | "douyin" | "tmall" | "wechat"
 
@@ -191,6 +194,14 @@ function PlatformTabs({
           </option>
         ))}
       </Select>
+    </div>
+  )
+}
+
+function PageLoading() {
+  return (
+    <div className="flex min-h-[240px] items-center justify-center text-sm text-muted-foreground">
+      页面加载中…
     </div>
   )
 }
@@ -531,7 +542,7 @@ function Layout() {
     if (pageId && ((pageId === "operations_daily" && !isMaster()) || !canAccessPage(pageId))) {
       navigate(firstAllowedFallback(), { replace: true })
     }
-  }, [location.pathname])
+  }, [location.pathname, navigate])
 
   const handlePlatformChange = (p: Platform) => {
     const tab = platformTabs.find((t) => t.key === p)
@@ -567,7 +578,8 @@ function Layout() {
           </Button>
         </header>
         <div className="flex-1 p-4 md:p-6 overflow-auto">
-          <Routes>
+          <Suspense fallback={<PageLoading />}>
+            <Routes>
             <Route path="/operations-daily" element={<OperationsDailyPage />} />
             <Route path="/" element={<DashboardPage />} />
             <Route path="/stores" element={<StoresPage />} />
@@ -594,7 +606,8 @@ function Layout() {
             <Route path="/wechat/orders" element={<WechatOrdersPage />} />
             <Route path="/wechat/costs" element={<WechatCostsPage />} />
             <Route path="/change-password" element={<ChangePasswordPage />} />
-          </Routes>
+            </Routes>
+          </Suspense>
         </div>
       </main>
     </div>
@@ -604,17 +617,20 @@ function Layout() {
 function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route
-          path="/*"
-          element={
-            <AuthGuard>
-              <Layout />
-            </AuthGuard>
-          }
-        />
-      </Routes>
+      <Suspense fallback={<PageLoading />}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/v2" element={<V2WorkbenchPage />} />
+          <Route
+            path="/*"
+            element={
+              <AuthGuard>
+                <Layout />
+              </AuthGuard>
+            }
+          />
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   )
 }
