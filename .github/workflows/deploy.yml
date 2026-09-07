@@ -45,6 +45,7 @@ jobs:
             sudo -u postgres psql -v ON_ERROR_STOP=1 -tc "SELECT 1 FROM pg_database WHERE datname='pdd_v2_test'" | grep -q 1 || sudo -u postgres createdb -O pdd_v2_test pdd_v2_test
             sudo -u postgres psql -v ON_ERROR_STOP=1 -d pdd_v2_test -f v2/schema.sql
             sudo -u postgres psql -v ON_ERROR_STOP=1 -d pdd_v2_test -c "GRANT USAGE,CREATE ON SCHEMA public TO pdd_v2_test; GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO pdd_v2_test; GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO pdd_v2_test; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO pdd_v2_test; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO pdd_v2_test;"
+            sudo -u postgres psql -v ON_ERROR_STOP=1 -d pdd_v2_test -c "DO \$\$ DECLARE r record; BEGIN FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' LOOP EXECUTE format('ALTER TABLE public.%I OWNER TO pdd_v2_test', r.tablename); END LOOP; FOR r IN SELECT sequence_name FROM information_schema.sequences WHERE sequence_schema='public' LOOP EXECUTE format('ALTER SEQUENCE public.%I OWNER TO pdd_v2_test', r.sequence_name); END LOOP; END \$\$;"
             DEPLOY_DIR=$(pwd)
             DEPLOY_USER=$(id -un)
             sudo tee /etc/systemd/system/pdd-v2.service >/dev/null <<UNIT
