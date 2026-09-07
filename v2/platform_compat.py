@@ -67,3 +67,49 @@ def records(platform: str, user: dict=Depends(_require_user)):
         cur.execute("select platform,store_name,min(coalesce(payment_time::date,created_at::date)) start_date,max(coalesce(payment_time::date,created_at::date)) end_date,count(*) order_count from platform_orders where platform=%s group by platform,store_name order by store_name",(platform,))
         return _row_dict(cur)
 
+
+@router.get("/{platform}/ai/config")
+def ai_config(platform: str, user: dict = Depends(_require_user)):
+    _check(platform)
+    return {"platform": platform}
+
+@router.post("/{platform}/ai/config")
+def ai_update(platform: str, config: dict[str, Any], user: dict = Depends(_require_user)):
+    _check(platform)
+    if user.get("role") not in {"master", "admin"}:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="仅管理员可修改 AI 配置")
+    return {"platform": platform, **config}
+
+@router.post("/{platform}/ai/test")
+def ai_test(platform: str, config: dict[str, Any], user: dict = Depends(_require_user)):
+    _check(platform)
+    return {"success": False, "error": "V2 AI 提供商尚未配置"}
+
+@router.post("/{platform}/ai/report")
+def ai_report(platform: str, store_name: str, start_date: date, end_date: date, config: dict[str, Any], user: dict = Depends(_require_user)):
+    _check(platform)
+    return {"platform": platform, "store_name": store_name, "start_date": start_date.isoformat(), "end_date": end_date.isoformat(), "content": "V2 AI 分析尚未配置提供商"}
+
+@router.get("/{platform}/wecom/config")
+def platform_wecom_config(platform: str, user: dict = Depends(_require_user)):
+    _check(platform)
+    return {"platform": platform}
+
+@router.post("/{platform}/wecom/config")
+def platform_wecom_update(platform: str, config: dict[str, Any], user: dict = Depends(_require_user)):
+    _check(platform)
+    if user.get("role") not in {"master", "admin"}:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="仅管理员可修改企业微信配置")
+    return {"platform": platform, **config}
+
+@router.post("/{platform}/wecom/preview")
+def platform_wecom_preview(platform: str, report_date: date, user: dict = Depends(_require_user)):
+    _check(platform)
+    return {"draft_id": "%s-%s" % (platform, report_date), "report_date": report_date.isoformat(), "content": "%s 运营日报待发送" % platform}
+
+@router.post("/{platform}/wecom/send")
+def platform_wecom_send(platform: str, report_date: date, config: dict[str, Any], user: dict = Depends(_require_user)):
+    _check(platform)
+    return {"success": False, "error": "该平台企业微信发送配置尚未完成"}
