@@ -34,6 +34,24 @@ jobs:
             sudo cp -r frontend/dist /var/www/pdd_kpi/
             sudo chown -R www-data:www-data /var/www/pdd_kpi
             sudo chmod -R 755 /var/www/pdd_kpi
+            sudo tee /etc/systemd/system/pdd-v2.service >/dev/null <<'UNIT'
+            [Unit]
+            Description=PDD KPI Dashboard V2 API
+            After=network.target
+
+            [Service]
+            User=www-data
+            WorkingDirectory=/home/ubuntu/pdd_kpi
+            Environment=V2_DATABASE_URL=postgresql://pdd_v2_test:pdd_v2_test_local_2026@127.0.0.1:5432/pdd_v2_test
+            ExecStart=/home/ubuntu/pdd_kpi/venv/bin/uvicorn v2.test_api:app --host 127.0.0.1 --port 18000 --workers 2
+            Restart=always
+            RestartSec=3
+
+            [Install]
+            WantedBy=multi-user.target
+            UNIT
+            sudo systemctl daemon-reload
+            sudo systemctl enable --now pdd-v2
             sudo systemctl restart pdd_kpi
             sudo systemctl reload nginx
             sudo systemctl is-active --quiet pdd_kpi
@@ -42,7 +60,7 @@ jobs:
             echo "=== listeners ==="
             ss -ltnp | grep -E ':8000|:18000|:18080' || true
             echo "=== pdd_kpi status ==="
-            sudo systemctl --no-pager status pdd_kpi || true
+            sudo systemctl --no-pager status pdd_kpi pdd-v2 || true
             echo "=== pdd_kpi unit ==="
             sudo systemctl cat pdd_kpi || true
             echo "=== pdd_kpi journal ==="
