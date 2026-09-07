@@ -34,16 +34,18 @@ jobs:
             sudo cp -r frontend/dist /var/www/pdd_kpi/
             sudo chown -R www-data:www-data /var/www/pdd_kpi
             sudo chmod -R 755 /var/www/pdd_kpi
-            sudo tee /etc/systemd/system/pdd-v2.service >/dev/null <<'UNIT'
+            DEPLOY_DIR=$(pwd)
+            DEPLOY_USER=$(id -un)
+            sudo tee /etc/systemd/system/pdd-v2.service >/dev/null <<UNIT
             [Unit]
             Description=PDD KPI Dashboard V2 API
             After=network.target
 
             [Service]
-            User=www-data
-            WorkingDirectory=/home/ubuntu/pdd_kpi
+            User=$DEPLOY_USER
+            WorkingDirectory=$DEPLOY_DIR
             Environment=V2_DATABASE_URL=postgresql://pdd_v2_test:pdd_v2_test_local_2026@127.0.0.1:5432/pdd_v2_test
-            ExecStart=/home/ubuntu/pdd_kpi/venv/bin/uvicorn v2.test_api:app --host 127.0.0.1 --port 18000 --workers 2
+            ExecStart=$DEPLOY_DIR/venv/bin/uvicorn v2.test_api:app --host 127.0.0.1 --port 18000 --workers 2
             Restart=always
             RestartSec=3
 
@@ -66,10 +68,10 @@ jobs:
             echo "=== pdd_kpi journal ==="
             sudo journalctl -u pdd_kpi -n 100 --no-pager || true
             for i in $(seq 1 30); do
-              if curl --fail --silent --show-error http://127.0.0.1:8000/health >/tmp/pdd-v2-health.json; then break; fi
+              if curl --fail --silent --show-error http://127.0.0.1:18000/health >/tmp/pdd-v2-health.json; then break; fi
               sleep 2
             done
             test -s /tmp/pdd-v2-health.json
-            curl --fail --silent --show-error http://127.0.0.1:8000/openapi.json >/tmp/pdd-v2-openapi.json
+            curl --fail --silent --show-error http://127.0.0.1:18000/openapi.json >/tmp/pdd-v2-openapi.json
             grep -q 'dashboard/operations-daily' /tmp/pdd-v2-openapi.json
             grep -q '"/api/users"' /tmp/pdd-v2-openapi.json
