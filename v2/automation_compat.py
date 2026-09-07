@@ -12,6 +12,7 @@ from v2.test_api import DATABASE_URL
 from v2.v1_compat import _require_user
 
 router = APIRouter(prefix="/api/v2/automation", tags=["automation"])
+legacy_router = APIRouter(prefix="/api/wecom", tags=["wecom-compat"])
 
 class SendRequest(BaseModel):
     report_date: date
@@ -48,3 +49,19 @@ def send(req: SendRequest, user: dict = Depends(_require_user)):
         raise HTTPException(status_code=502, detail="企业微信发送失败：%s" % exc) from exc
     return {"report": report, "delivery": result}
 
+
+@legacy_router.get("/schedule-status")
+def legacy_schedule_status(user: dict = Depends(_require_user)):
+    return schedule_status(user)
+
+@legacy_router.post("/preview")
+def legacy_preview(report_date: date, user: dict = Depends(_require_user)):
+    report = _build_report(report_date)
+    lines = ["V2运营日报 %s" % report["report_date"]]
+    for p in report["platforms"]:
+        lines.append("%s：订单%d，GMV %.2f，利润 %.2f" % (p["platform"], p["order_count"], p["gmv"], p["profit"]))
+    return {"draft_id": "v2-%s" % report["report_date"], "report_date": report["report_date"], "content": "\n".join(lines), "report": report}
+
+@legacy_router.post("/send")
+def legacy_send(req: SendRequest, user: dict = Depends(_require_user)):
+    return send(req, user)
