@@ -27,7 +27,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/api/_v2_proxy_debug")
+@app.get("/__v2_proxy_debug")
 async def proxy_debug():
     """Read-only probe showing the API instance behind this web service."""
     if httpx is None:
