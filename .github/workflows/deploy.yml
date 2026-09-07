@@ -34,6 +34,16 @@ jobs:
             sudo cp -r frontend/dist /var/www/pdd_kpi/
             sudo chown -R www-data:www-data /var/www/pdd_kpi
             sudo chmod -R 755 /var/www/pdd_kpi
+            # Provision the isolated V2 test database when the host has no
+            # container runtime/PostgreSQL yet. All statements are idempotent.
+            if ! command -v psql >/dev/null 2>&1; then
+              sudo apt-get update -y
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y postgresql postgresql-client
+            fi
+            sudo systemctl enable --now postgresql
+            sudo -u postgres psql -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='pdd_v2_test') THEN CREATE ROLE pdd_v2_test LOGIN PASSWORD 'pdd_v2_test_local_2026'; ELSE ALTER ROLE pdd_v2_test WITH LOGIN PASSWORD 'pdd_v2_test_local_2026'; END IF; END \$\$;"
+            sudo -u postgres psql -v ON_ERROR_STOP=1 -tc "SELECT 1 FROM pg_database WHERE datname='pdd_v2_test'" | grep -q 1 || sudo -u postgres createdb -O pdd_v2_test pdd_v2_test
+            sudo -u postgres psql -v ON_ERROR_STOP=1 -d pdd_v2_test -f v2/schema.sql
             DEPLOY_DIR=$(pwd)
             DEPLOY_USER=$(id -un)
             sudo tee /etc/systemd/system/pdd-v2.service >/dev/null <<UNIT
@@ -44,7 +54,7 @@ jobs:
             [Service]
             User=$DEPLOY_USER
             WorkingDirectory=$DEPLOY_DIR
-            Environment=V2_DATABASE_URL=postgresql://pdd_v2_test:pdd_v2_test_local_2026@127.0.0.1:55432/pdd_v2_test
+            Environment=V2_DATABASE_URL=postgresql://pdd_v2_test:pdd_v2_test_local_2026@127.0.0.1:5432/pdd_v2_test
             ExecStart=$DEPLOY_DIR/venv/bin/uvicorn v2.test_api:app --host 127.0.0.1 --port 18000 --workers 1
             Restart=always
             RestartSec=3
