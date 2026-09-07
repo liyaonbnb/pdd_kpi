@@ -38,7 +38,8 @@ def _build_report(report_date: date) -> dict[str, Any]:
             where coalesce(o.payment_time::date, c.average_cost_as_of::date) = %s
             group by c.platform
             order by c.platform
-        """, (report_date,))`r`n        rows = cur.fetchall()
+        """, (report_date,))
+        rows = cur.fetchall()
     platforms=[{"platform":r[0],"order_count":r[1],"gmv":float(r[2]),"product_cost":float(r[3]),"shipping_fee":float(r[4]),"profit":float(r[2]-r[3]-r[4])} for r in rows]
     return {"report_date":report_date.isoformat(),"platforms":platforms,"totals":{"order_count":sum(x["order_count"] for x in platforms),"gmv":sum(x["gmv"] for x in platforms),"product_cost":sum(x["product_cost"] for x in platforms),"shipping_fee":sum(x["shipping_fee"] for x in platforms),"profit":sum(x["profit"] for x in platforms)}}
 
@@ -109,5 +110,6 @@ def legacy_listen(payload: dict[str, Any], user: dict = Depends(_require_user)):
     config = payload.get("config") or {}
     timeout = int(payload.get("timeout", 60))
     return listen_wecom_chatid(config, timeout)
+
 
 
