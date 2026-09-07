@@ -27,6 +27,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def add_v2_fingerprint(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-PDD-V2-Web"] = "v2-proxy-2026-09"
+    return response
+
 @app.get("/__v2_proxy_debug")
 async def proxy_debug():
     """Read-only probe showing the API instance behind this web service."""
