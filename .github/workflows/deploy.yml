@@ -20,7 +20,9 @@ jobs:
           debug: true
           script: |
             cd /home/ubuntu/pdd_kpi
-            git pull origin master
+            git fetch origin master
+            git reset --hard origin/master
+            echo "deployed_commit=$(git rev-parse HEAD)"
             ./venv/bin/pip install -r requirements.txt -q
             # 清理过时的字节码，避免运行时加载旧逻辑
             find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
@@ -34,3 +36,7 @@ jobs:
             sudo chmod -R 755 /var/www/pdd_kpi
             sudo systemctl restart pdd_kpi
             sudo systemctl reload nginx
+            sudo systemctl is-active --quiet pdd_kpi
+            curl --fail --silent --show-error http://127.0.0.1:18000/health
+            curl --fail --silent --show-error http://127.0.0.1:18000/openapi.json | grep -q 'dashboard/operations-daily'
+            curl --fail --silent --show-error http://127.0.0.1:18000/openapi.json | grep -q '"/api/users"'
