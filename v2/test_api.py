@@ -1711,10 +1711,14 @@ app.include_router(v2.costs.router)
 import v2.stock_io
 app.include_router(v2.stock_io.router)
 
+from v2 import automation_compat
+app.include_router(automation_compat.router)
+
 from v2 import platform_compat
 app.include_router(platform_compat.router)
 
 from v2 import v1_compat
 app.router.routes.extend(v1_compat.router.routes)
+
 
 
