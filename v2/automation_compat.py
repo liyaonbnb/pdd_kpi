@@ -28,8 +28,13 @@ def _build_report(report_date: date) -> dict[str, Any]:
 
 @router.get("/schedule-status")
 def schedule_status(user: dict = Depends(_require_user)):
-    return {"enabled": False, "schedule": "30 10 * * *", "schedule_time": "10:30", "source": "v2", "message": "V2 任务由服务器 cron/systemd 配置后启用"}
-
+    try:
+        from daily_wecom_job import get_daily_wecom_schedule_status
+        status = get_daily_wecom_schedule_status()
+        status["source"] = "v2"
+        return status
+    except Exception:
+        return {"enabled": False, "schedule": "30 10 * * *", "schedule_time": "10:30", "source": "v2", "message": "任务状态暂不可读"}
 @router.get("/daily/preview")
 def preview(report_date: date | None = None, user: dict = Depends(_require_user)):
     return _build_report(report_date or (date.today()-timedelta(days=1)))
@@ -65,3 +70,26 @@ def legacy_preview(report_date: date, user: dict = Depends(_require_user)):
 @legacy_router.post("/send")
 def legacy_send(req: SendRequest, user: dict = Depends(_require_user)):
     return send(req, user)
+
+@legacy_router.get("/config")
+def legacy_config(user: dict = Depends(_require_user)):
+    try:
+        from wecom import load_wecom_config
+        return load_wecom_config()
+    except Exception:
+        return {}
+
+@legacy_router.post("/config")
+def legacy_update_config(config: dict[str, Any], user: dict = Depends(_require_user)):
+    if user.get("role") not in {"master", "admin"}:
+        raise HTTPException(status_code=403, detail="仅管理员可修改企业微信配置")
+    from wecom import save_wecom_config
+    save_wecom_config(config)
+    return config
+
+@legacy_router.post("/listen")
+def legacy_listen(payload: dict[str, Any], user: dict = Depends(_require_user)):
+    from wecom import listen_wecom_chatid
+    config = payload.get("config") or {}
+    timeout = int(payload.get("timeout", 60))
+    return listen_wecom_chatid(config, timeout)
