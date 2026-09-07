@@ -21,8 +21,24 @@ class SendRequest(BaseModel):
 
 def _build_report(report_date: date) -> dict[str, Any]:
     with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
-        cur.execute("""select c.platform, count(distinct c.order_id), coalesce(sum(l.line_amount),0), coalesce(sum(c.product_cost),0), coalesce(sum(c.shipping_fee),0) from order_cost_snapshots c left join platform_orders o on o.order_id=c.order_id left join platform_order_lines l on l.order_id=o.id where coalesce(o.payment_time::date,c.average_cost_as_of::date)=%s group by c.platform order by c.platform""", (report_date,))
-        rows = cur.fetchall()
+        cur.execute("""
+            select c.platform,
+                   count(*) as order_count,
+                   coalesce(sum(oa.order_gmv), 0) as order_gmv,
+                   coalesce(sum(c.product_cost), 0) as product_cost,
+                   coalesce(sum(c.shipping_fee), 0) as shipping_fee
+            from order_cost_snapshots c
+            left join platform_orders o on o.order_id = c.order_id
+            left join (
+                select o2.order_id, sum(l2.line_amount) as order_gmv
+                from platform_orders o2
+                join platform_order_lines l2 on l2.order_id = o2.id
+                group by o2.order_id
+            ) oa on oa.order_id = c.order_id
+            where coalesce(o.payment_time::date, c.average_cost_as_of::date) = %s
+            group by c.platform
+            order by c.platform
+        """, (report_date,))`r`n        rows = cur.fetchall()
     platforms=[{"platform":r[0],"order_count":r[1],"gmv":float(r[2]),"product_cost":float(r[3]),"shipping_fee":float(r[4]),"profit":float(r[2]-r[3]-r[4])} for r in rows]
     return {"report_date":report_date.isoformat(),"platforms":platforms,"totals":{"order_count":sum(x["order_count"] for x in platforms),"gmv":sum(x["gmv"] for x in platforms),"product_cost":sum(x["product_cost"] for x in platforms),"shipping_fee":sum(x["shipping_fee"] for x in platforms),"profit":sum(x["profit"] for x in platforms)}}
 
@@ -93,3 +109,5 @@ def legacy_listen(payload: dict[str, Any], user: dict = Depends(_require_user)):
     config = payload.get("config") or {}
     timeout = int(payload.get("timeout", 60))
     return listen_wecom_chatid(config, timeout)
+
+
