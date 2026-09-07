@@ -27,7 +27,7 @@ try {
         Pop-Location
     }
 
-    Write-Host "本地 V2 回归检查全部通过。" -ForegroundColor Green
+    Write-Host "Local V2 regression checks passed." -ForegroundColor Green
 }
 finally {
     Pop-Location
