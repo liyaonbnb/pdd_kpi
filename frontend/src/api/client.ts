@@ -535,12 +535,14 @@ const AI_PREFIX: Record<string, string> = {
   pdd: "/ai",
   douyin: "/douyin/ai",
   tmall: "/tmall/ai",
+  wechat: "/wechat/ai",
 }
 
 const WECOM_PREFIX: Record<string, string> = {
   pdd: "/wecom",
   douyin: "/douyin/wecom",
   tmall: "/tmall/wecom",
+  wechat: "/wechat/wecom",
 }
 
 function aiPrefix(platform: string) {
@@ -1176,3 +1178,4 @@ export async function mapWechatProduct(skuCode: string, productName?: string) {
   })
   return res.data
 }
+
