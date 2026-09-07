@@ -1711,4 +1711,4 @@ import v2.stock_io
 app.include_router(v2.stock_io.router)
 
 from v2 import v1_compat
-app.include_router(v1_compat.router)
+app.router.routes.extend(v1_compat.router.routes)
