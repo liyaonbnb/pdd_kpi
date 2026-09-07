@@ -19,7 +19,7 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           debug: true
           script: |
-            cd /home/ubuntu/pdd_kpi
+            cd /opt/pdd_bi_v2_test
             git fetch origin master
             git reset --hard origin/master
             echo "deployed_commit=$(git rev-parse HEAD)"
@@ -128,4 +128,5 @@ jobs:
             grep -q '"/api/users"' /tmp/pdd-v2-openapi.json
             curl --fail --silent --show-error http://127.0.0.1:18080/api/v2/config >/tmp/pdd-v2-web-config.json
             curl --fail --silent --show-error http://127.0.0.1:18080/api/dashboard/operations-daily >/tmp/pdd-v2-web-daily.json || test "$?" = 22
+
 
