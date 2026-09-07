@@ -40,7 +40,7 @@ jobs:
             echo "=== services ==="
             systemctl --no-pager --type=service --state=running | grep -Ei 'pdd|uvicorn|gunicorn|api' || true
             echo "=== listeners ==="
-            ss -ltnp | grep -E ':18000|:18080' || true
+            ss -ltnp | grep -E ':8000|:18000|:18080' || true
             echo "=== pdd_kpi status ==="
             sudo systemctl --no-pager status pdd_kpi || true
             echo "=== pdd_kpi unit ==="
@@ -48,10 +48,10 @@ jobs:
             echo "=== pdd_kpi journal ==="
             sudo journalctl -u pdd_kpi -n 100 --no-pager || true
             for i in $(seq 1 30); do
-              if curl --fail --silent --show-error http://127.0.0.1:18000/health >/tmp/pdd-v2-health.json; then break; fi
+              if curl --fail --silent --show-error http://127.0.0.1:8000/health >/tmp/pdd-v2-health.json; then break; fi
               sleep 2
             done
             test -s /tmp/pdd-v2-health.json
-            curl --fail --silent --show-error http://127.0.0.1:18000/openapi.json >/tmp/pdd-v2-openapi.json
+            curl --fail --silent --show-error http://127.0.0.1:8000/openapi.json >/tmp/pdd-v2-openapi.json
             grep -q 'dashboard/operations-daily' /tmp/pdd-v2-openapi.json
             grep -q '"/api/users"' /tmp/pdd-v2-openapi.json
