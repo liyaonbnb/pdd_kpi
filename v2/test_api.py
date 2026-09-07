@@ -602,7 +602,8 @@ def _require_user_token(x_v2_test_token: str | None, authorization: str | None) 
 def health() -> dict[str, Any]:
     try:
         db = _db_status()
-        return {"status": "ok", "service": "pdd-bi-v2-test", "database": "ok", **db}
+        paths = {getattr(route, "path", "") for route in app.routes}
+        return {"status": "ok", "service": "pdd-bi-v2-test", "database": "ok", "compat_routes": {"users": "/api/users" in paths, "operations_daily": "/api/dashboard/operations-daily" in paths}, **db}
     except Exception as exc:  # pragma: no cover - exercised by deployment checks
         return {"status": "degraded", "service": "pdd-bi-v2-test", "database": "error", "detail": str(exc)}
 
