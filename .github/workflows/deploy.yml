@@ -57,7 +57,7 @@ jobs:
             User=$DEPLOY_USER
             WorkingDirectory=$DEPLOY_DIR
             Environment=V2_DATABASE_URL=postgresql://pdd_v2_test:pdd_v2_test_local_2026@127.0.0.1:5432/pdd_v2_test
-            ExecStart=$DEPLOY_DIR/venv/bin/uvicorn v2.test_api:app --host 0.0.0.0 --port 18000 --workers 1
+            ExecStart=$DEPLOY_DIR/venv/bin/uvicorn --app-dir $DEPLOY_DIR v2.test_api:app --host 0.0.0.0 --port 18000 --workers 1
             Restart=always
             RestartSec=3
 
@@ -76,7 +76,7 @@ jobs:
             WorkingDirectory=$DEPLOY_DIR
             Environment=V2_WEB_DIST=$DEPLOY_DIR/frontend/dist
             Environment=V2_API_INTERNAL_URL=http://127.0.0.1:18000
-            ExecStart=$DEPLOY_DIR/venv/bin/uvicorn v2.test_web:app --host 0.0.0.0 --port 18080 --workers 1
+            ExecStart=$DEPLOY_DIR/venv/bin/uvicorn --app-dir $DEPLOY_DIR v2.test_web:app --host 0.0.0.0 --port 18080 --workers 1
             Restart=always
             RestartSec=3
             [Install]
@@ -127,3 +127,4 @@ jobs:
             grep -q 'dashboard/operations-daily' /tmp/pdd-v2-openapi.json
             grep -q '"/api/users"' /tmp/pdd-v2-openapi.json
             curl --fail --silent --show-error http://127.0.0.1:18080/api/v2/config >/tmp/pdd-v2-web-config.json
+            curl --fail --silent --show-error http://127.0.0.1:18080/api/dashboard/operations-daily >/tmp/pdd-v2-web-daily.json || test "$?" = 22
