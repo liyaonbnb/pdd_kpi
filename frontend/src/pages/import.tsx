@@ -13,12 +13,15 @@ import {
   Trash2,
   Upload,
 } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { FileDropzone } from "@/components/ui/file-dropzone"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { PageHeader } from "@/components/page-kit"
 import { isMaster } from "@/api/auth"
 import {
   deleteRecord,
@@ -52,12 +55,12 @@ type PlatformRecord = {
 
 type BatchFilter = "all" | "imported" | "rolled_back" | "failed"
 
-const statusMeta: Record<ImportBatch["status"], { label: string; className: string }> = {
-  importing: { label: "导入中", className: "bg-blue-50 text-blue-700 ring-blue-200" },
-  imported: { label: "已导入", className: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
-  rolled_back: { label: "已撤销", className: "bg-zinc-100 text-zinc-600 ring-zinc-200" },
-  failed: { label: "失败", className: "bg-red-50 text-red-700 ring-red-200" },
-  invalidated: { label: "已失效", className: "bg-amber-50 text-amber-700 ring-amber-200" },
+const statusMeta: Record<ImportBatch["status"], { label: string; variant: "default" | "secondary" | "destructive" | "outline" | "success" }> = {
+  importing: { label: "导入中", variant: "default" },
+  imported: { label: "已导入", variant: "success" },
+  rolled_back: { label: "已撤销", variant: "secondary" },
+  failed: { label: "失败", variant: "destructive" },
+  invalidated: { label: "已失效", variant: "outline" },
 }
 
 const batchFilters: Array<{ value: BatchFilter; label: string }> = [
@@ -74,11 +77,7 @@ function formatTime(value: string) {
 
 function StatusPill({ status }: { status: ImportBatch["status"] }) {
   const meta = statusMeta[status] || statusMeta.invalidated
-  return (
-    <span className={`inline-flex items-center rounded px-2 py-1 text-xs font-medium ring-1 ring-inset ${meta.className}`}>
-      {meta.label}
-    </span>
-  )
+  return <Badge variant={meta.variant}>{meta.label}</Badge>
 }
 
 export function ImportPage() {
@@ -261,63 +260,61 @@ export function ImportPage() {
 
   return (
     <div className="space-y-6 pb-8">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <div className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-            <span>拼多多</span><span className="text-zinc-300">/</span><span>数据中心</span>
+      <PageHeader
+        title="数据导入"
+        description="拼多多 / 数据中心"
+        actions={(
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Clock3 className="h-3.5 w-3.5" />
+            最近导入 {batches[0] ? formatTime(batches[0].created_at) : "暂无"}
           </div>
-          <h2 className="text-2xl font-semibold text-zinc-950">数据导入</h2>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Clock3 className="h-3.5 w-3.5" />
-          最近导入 {batches[0] ? formatTime(batches[0].created_at) : "暂无"}
-        </div>
-      </div>
+        )}
+      />
 
       {message && (
-        <div className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm ${messageIsSuccess ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>
+        <div className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm ${messageIsSuccess ? "border-success/30 bg-success/10 text-success" : "border-destructive/30 bg-destructive/10 text-destructive"}`}>
           {messageIsSuccess ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertTriangle className="h-4 w-4 shrink-0" />}
           {message}
         </div>
       )}
 
-      <section className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
+      <section className="overflow-hidden rounded-lg border bg-card shadow-sm">
         <div className="grid lg:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.85fr)]">
           <div className="p-5 sm:p-6">
             <div className="mb-5 flex items-center gap-3">
-              <span className="flex h-8 w-8 items-center justify-center rounded-md bg-zinc-950 text-white">
+              <span className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
                 <Upload className="h-4 w-4" />
               </span>
               <div>
-                <h3 className="text-sm font-semibold text-zinc-950">新建导入</h3>
+                <h3 className="text-sm font-semibold">新建导入</h3>
                 <p className="text-xs text-muted-foreground">{storeName || "未选择店铺"} · {importDate}</p>
               </div>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-zinc-700">店铺</Label>
+                <Label>店铺</Label>
                 <Select value={storeName} onChange={(e) => { setStoreName(e.target.value); resetPreview() }}>
                   <option value="">选择店铺</option>
                   {stores.map((store) => <option key={store.id} value={store.name}>{store.name}</option>)}
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-zinc-700">推广数据日期</Label>
+                <Label>推广数据日期</Label>
                 <Input type="date" value={importDate} onChange={(e) => { setImportDate(e.target.value); resetPreview() }} />
               </div>
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-zinc-700">推广数据</Label>
+                <Label>推广数据</Label>
                 <FileDropzone
                   compact accept=".xls,.xlsx" label="选择推广 Excel" description="XLS / XLSX"
                   value={promoFile} onChange={(file) => { setPromoFile(file); resetPreview() }}
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-zinc-700">订单数据</Label>
+                <Label>订单数据</Label>
                 <FileDropzone
                   compact accept=".csv" label="选择订单 CSV" description="CSV"
                   value={orderFile} onChange={(file) => { setOrderFile(file); resetPreview() }}
@@ -325,7 +322,7 @@ export function ImportPage() {
               </div>
             </div>
 
-            <div className="mt-5 flex items-center justify-between border-t border-zinc-100 pt-4">
+            <div className="mt-5 flex items-center justify-between border-t pt-4">
               <div className="text-xs text-muted-foreground">{hasFiles ? `${Number(Boolean(promoFile)) + Number(Boolean(orderFile))} 个文件待检查` : "尚未选择文件"}</div>
               <Button onClick={handlePreview} disabled={loading || !hasFiles} className="min-w-[118px]">
                 {loading && !preview ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}
@@ -334,11 +331,11 @@ export function ImportPage() {
             </div>
           </div>
 
-          <aside className="border-t border-zinc-200 bg-zinc-50/70 p-5 sm:p-6 lg:border-l lg:border-t-0">
+          <aside className="border-t bg-muted/40 p-5 sm:p-6 lg:border-l lg:border-t-0">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-zinc-950">检查摘要</h3>
+              <h3 className="text-sm font-semibold">检查摘要</h3>
               {preview && (
-                <span className={`inline-flex items-center gap-1 text-xs font-medium ${preview.can_import ? "text-emerald-700" : "text-red-700"}`}>
+                <span className={`inline-flex items-center gap-1 text-xs font-medium ${preview.can_import ? "text-success" : "text-destructive"}`}>
                   {preview.can_import ? <Check className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
                   {preview.can_import ? "校验通过" : "需要处理"}
                 </span>
@@ -346,22 +343,22 @@ export function ImportPage() {
             </div>
 
             {!preview ? (
-              <div className="flex min-h-[238px] flex-col items-center justify-center border-y border-dashed border-zinc-200 text-center">
-                <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-white text-zinc-400 ring-1 ring-zinc-200">
+              <div className="flex min-h-[238px] flex-col items-center justify-center border-y border-dashed text-center">
+                <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-card text-muted-foreground ring-1 ring-border">
                   <FileCheck2 className="h-4 w-4" />
                 </span>
-                <p className="text-sm font-medium text-zinc-700">尚未生成检查结果</p>
+                <p className="text-sm font-medium">尚未生成检查结果</p>
               </div>
             ) : (
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-zinc-200 bg-zinc-200">
+                <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border">
                   {[
-                    ["有效订单", stats?.valid_orders || 0, "text-zinc-950"],
-                    ["新增订单", stats?.new_orders || 0, "text-emerald-700"],
-                    ["覆盖已有", stats?.existing_orders || 0, "text-amber-700"],
-                    ["迁移日期", stats?.migrated_orders || 0, "text-blue-700"],
+                    ["有效订单", stats?.valid_orders || 0, "text-foreground"],
+                    ["新增订单", stats?.new_orders || 0, "text-success"],
+                    ["覆盖已有", stats?.existing_orders || 0, "text-chart-3"],
+                    ["迁移日期", stats?.migrated_orders || 0, "text-primary"],
                   ].map(([label, value, color]) => (
-                    <div key={String(label)} className="bg-white px-3 py-3">
+                    <div key={String(label)} className="bg-card px-3 py-3">
                       <div className="text-[11px] text-muted-foreground">{label}</div>
                       <div className={`mt-0.5 text-xl font-semibold tabular-nums ${color}`}>{value}</div>
                     </div>
@@ -374,9 +371,9 @@ export function ImportPage() {
                 </div>
 
                 {(preview.blockers.length > 0 || preview.warnings.length > 0) && (
-                  <div className="space-y-2 border-t border-zinc-200 pt-3">
-                    {preview.blockers.map((item) => <div key={item} className="flex gap-2 text-xs leading-5 text-red-700"><ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />{item}</div>)}
-                    {preview.warnings.map((item) => <div key={item} className="flex gap-2 text-xs leading-5 text-amber-700"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{item}</div>)}
+                  <div className="space-y-2 border-t pt-3">
+                    {preview.blockers.map((item) => <div key={item} className="flex gap-2 text-xs leading-5 text-destructive"><ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />{item}</div>)}
+                    {preview.warnings.map((item) => <div key={item} className="flex gap-2 text-xs leading-5 text-chart-3"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{item}</div>)}
                   </div>
                 )}
 
@@ -390,12 +387,12 @@ export function ImportPage() {
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-        <div className="flex flex-col gap-3 border-b border-zinc-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <section className="overflow-hidden rounded-lg border bg-card shadow-sm">
+        <div className="flex flex-col gap-3 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
-            <span className="flex h-8 w-8 items-center justify-center rounded-md bg-zinc-100 text-zinc-700"><History className="h-4 w-4" /></span>
+            <span className="flex h-8 w-8 items-center justify-center rounded-md bg-muted text-muted-foreground"><History className="h-4 w-4" /></span>
             <div>
-              <h3 className="text-sm font-semibold text-zinc-950">导入批次</h3>
+              <h3 className="text-sm font-semibold">导入批次</h3>
               <p className="text-xs text-muted-foreground">共 {batches.length} 条记录</p>
             </div>
           </div>
@@ -405,13 +402,13 @@ export function ImportPage() {
                 <Trash2 className="h-3.5 w-3.5" />数据清理
               </Button>
             )}
-            <div className="inline-flex w-fit rounded-md bg-zinc-100 p-0.5">
+            <div className="inline-flex w-fit rounded-md bg-muted p-0.5">
               {batchFilters.map((filter) => (
               <button
                 key={filter.value}
                 type="button"
                 onClick={() => setBatchFilter(filter.value)}
-                className={`h-7 rounded px-2.5 text-xs font-medium transition-colors ${batchFilter === filter.value ? "bg-white text-zinc-950 shadow-sm" : "text-zinc-500 hover:text-zinc-800"}`}
+                className={`h-7 rounded px-2.5 text-xs font-medium transition-colors ${batchFilter === filter.value ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
               >
                 {filter.label}
               </button>
@@ -421,32 +418,32 @@ export function ImportPage() {
         </div>
 
         <Table className="min-w-[850px]">
-          <TableHeader className="bg-zinc-50/80"><TableRow>
+          <TableHeader><TableRow>
             <TableHead className="pl-5">批次</TableHead><TableHead>店铺 / 文件</TableHead>
             <TableHead className="text-right">新增</TableHead><TableHead className="text-right">覆盖</TableHead>
             <TableHead>导入人</TableHead><TableHead>状态</TableHead><TableHead className="pr-5 text-right">操作</TableHead>
           </TableRow></TableHeader>
           <TableBody>
             {filteredBatches.map((batch) => (
-              <TableRow key={batch.batch_id} className="hover:bg-zinc-50/70">
+              <TableRow key={batch.batch_id}>
                 <TableCell className="pl-5">
-                  <div className="font-mono text-xs font-medium text-zinc-800">{batch.batch_id.slice(0, 8)}</div>
+                  <div className="font-mono text-xs font-medium">{batch.batch_id.slice(0, 8)}</div>
                   <div className="mt-0.5 whitespace-nowrap text-[11px] text-muted-foreground">{formatTime(batch.created_at)}</div>
                 </TableCell>
                 <TableCell>
-                  <div className="text-sm font-medium text-zinc-900">{batch.store_name}</div>
+                  <div className="text-sm font-medium">{batch.store_name}</div>
                   <div className="mt-0.5 max-w-[260px] truncate text-xs text-muted-foreground">{batch.order_filename || batch.promo_filename}</div>
                 </TableCell>
-                <TableCell className="text-right font-medium tabular-nums text-emerald-700">{batch.stats?.new_orders || 0}</TableCell>
-                <TableCell className="text-right font-medium tabular-nums text-amber-700">{batch.stats?.existing_orders || 0}</TableCell>
-                <TableCell className="text-xs text-zinc-600">{batch.imported_by || "-"}</TableCell>
+                <TableCell className="text-right font-medium tabular-nums text-success">{batch.stats?.new_orders || 0}</TableCell>
+                <TableCell className="text-right font-medium tabular-nums text-chart-3">{batch.stats?.existing_orders || 0}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{batch.imported_by || "-"}</TableCell>
                 <TableCell><StatusPill status={batch.status} /></TableCell>
                 <TableCell className="pr-5 text-right">
                   <Button
                     variant="ghost" size="sm" title={batch.can_rollback ? "撤销本次导入" : batch.rollback_reason}
                     disabled={!batch.can_rollback || busyBatch === batch.batch_id}
                     onClick={() => handleRollback(batch)}
-                    className="text-zinc-600 hover:text-zinc-950"
+                    className="text-muted-foreground hover:text-foreground"
                   >
                     {busyBatch === batch.batch_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
                     撤销
@@ -461,41 +458,39 @@ export function ImportPage() {
         </Table>
       </section>
 
-      {master && cleanupOpen && (
-        <section className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4">
-            <div>
-              <h3 className="text-sm font-semibold text-zinc-950">数据清理中心</h3>
-              <p className="mt-0.5 text-xs text-muted-foreground">仅处理指定店铺指定日期，不影响其他日期。</p>
-            </div>
-            <Button variant="ghost" size="sm" onClick={() => setCleanupOpen(false)}>关闭</Button>
-          </div>
-          <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.8fr)]">
+      {master && (
+        <Dialog open={cleanupOpen} onOpenChange={setCleanupOpen}>
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>数据清理中心</DialogTitle>
+              <DialogDescription>仅处理指定店铺指定日期，不影响其他日期。</DialogDescription>
+            </DialogHeader>
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.8fr)]">
             <div className="space-y-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-medium text-zinc-700">店铺</Label>
+                  <Label>店铺</Label>
                   <Select value={cleanupStore} onChange={(e) => { setCleanupStore(e.target.value); setCleanupPreviewData(null) }}>
                     <option value="">选择店铺</option>
                     {stores.map((store) => <option key={store.id} value={store.name}>{store.name}</option>)}
                   </Select>
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-medium text-zinc-700">日期</Label>
+                  <Label>日期</Label>
                   <Input type="date" value={cleanupDate} onChange={(e) => { setCleanupDate(e.target.value); setCleanupPreviewData(null) }} />
                 </div>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-zinc-700">清理范围</Label>
+                <Label>清理范围</Label>
                 <div className="grid gap-2 sm:grid-cols-3">
                   {[
                     ["orders", "仅订单", "保留推广数据"],
                     ["promo", "仅推广", "保留订单数据"],
                     ["all", "整日数据", "订单、推广、指标全部删除"],
                   ].map(([value, label, desc]) => (
-                    <button key={value} type="button" onClick={() => { setCleanupType(value as typeof cleanupType); setCleanupPreviewData(null) }} className={`rounded-md border p-3 text-left transition-colors ${cleanupType === value ? "border-zinc-950 bg-zinc-950 text-white" : "border-zinc-200 hover:border-zinc-400"}`}>
+                    <button key={value} type="button" onClick={() => { setCleanupType(value as typeof cleanupType); setCleanupPreviewData(null) }} className={`rounded-md border p-3 text-left transition-colors ${cleanupType === value ? "border-primary bg-primary text-primary-foreground" : "hover:border-ring/60 hover:bg-accent/50"}`}>
                       <div className="text-sm font-medium">{label}</div>
-                      <div className={`mt-1 text-[11px] ${cleanupType === value ? "text-zinc-300" : "text-muted-foreground"}`}>{desc}</div>
+                      <div className={`mt-1 text-[11px] ${cleanupType === value ? "text-primary-foreground/70" : "text-muted-foreground"}`}>{desc}</div>
                     </button>
                   ))}
                 </div>
@@ -504,19 +499,19 @@ export function ImportPage() {
                 <FileCheck2 className="h-4 w-4" />检查影响范围
               </Button>
             </div>
-            <div className="rounded-lg border border-zinc-200 bg-zinc-50/70 p-4">
-              <h4 className="text-sm font-semibold text-zinc-900">删除前预览</h4>
+            <div className="rounded-lg border bg-muted/40 p-4">
+              <h4 className="text-sm font-semibold">删除前预览</h4>
               {!cleanupPreviewData ? (
                 <p className="mt-8 text-center text-xs text-muted-foreground">选择店铺和日期后检查</p>
               ) : (
                 <div className="mt-4 space-y-3">
                   <div className="grid grid-cols-2 gap-2">
-                    <div className="rounded border border-zinc-200 bg-white p-3"><div className="text-[11px] text-muted-foreground">订单行</div><div className="mt-1 text-xl font-semibold text-zinc-950">{cleanupPreviewData.order_rows}</div></div>
-                    <div className="rounded border border-zinc-200 bg-white p-3"><div className="text-[11px] text-muted-foreground">推广行</div><div className="mt-1 text-xl font-semibold text-zinc-950">{cleanupPreviewData.promo_rows}</div></div>
-                    <div className="rounded border border-zinc-200 bg-white p-3"><div className="text-[11px] text-muted-foreground">商品指标</div><div className="mt-1 text-xl font-semibold text-zinc-950">{cleanupPreviewData.product_rows}</div></div>
-                    <div className="rounded border border-zinc-200 bg-white p-3"><div className="text-[11px] text-muted-foreground">样式指标</div><div className="mt-1 text-xl font-semibold text-zinc-950">{cleanupPreviewData.style_rows}</div></div>
+                    <div className="rounded border bg-card p-3"><div className="text-[11px] text-muted-foreground">订单行</div><div className="mt-1 text-xl font-semibold">{cleanupPreviewData.order_rows}</div></div>
+                    <div className="rounded border bg-card p-3"><div className="text-[11px] text-muted-foreground">推广行</div><div className="mt-1 text-xl font-semibold">{cleanupPreviewData.promo_rows}</div></div>
+                    <div className="rounded border bg-card p-3"><div className="text-[11px] text-muted-foreground">商品指标</div><div className="mt-1 text-xl font-semibold">{cleanupPreviewData.product_rows}</div></div>
+                    <div className="rounded border bg-card p-3"><div className="text-[11px] text-muted-foreground">样式指标</div><div className="mt-1 text-xl font-semibold">{cleanupPreviewData.style_rows}</div></div>
                   </div>
-                  <p className="text-xs leading-5 text-amber-700">确认后会写入操作日志，并将相关导入批次标记为已失效。</p>
+                  <p className="text-xs leading-5 text-chart-3">确认后会写入操作日志，并将相关导入批次标记为已失效。</p>
                   <Button variant="destructive" onClick={handleCleanup} disabled={cleanupLoading || (!cleanupPreviewData.has_orders && !cleanupPreviewData.has_promo)} className="w-full gap-1.5">
                     <Trash2 className="h-4 w-4" />确认清理
                   </Button>
@@ -524,27 +519,28 @@ export function ImportPage() {
               )}
             </div>
           </div>
-        </section>
+          </DialogContent>
+        </Dialog>
       )}
 
       {master && (
-        <details className="group overflow-hidden rounded-lg border border-zinc-200 bg-white">
-          <summary className="flex cursor-pointer list-none items-center justify-between px-5 py-4 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
-            <span className="flex items-center gap-2"><Trash2 className="h-4 w-4 text-zinc-400" />整日数据管理</span>
-            <ChevronDown className="h-4 w-4 text-zinc-400 transition-transform group-open:rotate-180" />
+        <details className="group overflow-hidden rounded-lg border bg-card">
+          <summary className="flex cursor-pointer list-none items-center justify-between px-5 py-4 text-sm font-medium hover:bg-muted/50">
+            <span className="flex items-center gap-2"><Trash2 className="h-4 w-4 text-muted-foreground" />整日数据管理</span>
+            <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
           </summary>
-          <div className="border-t border-zinc-200">
+          <div className="border-t">
             <Table className="min-w-[620px]">
-              <TableHeader className="bg-zinc-50/80"><TableRow>
+              <TableHeader><TableRow>
                 <TableHead className="pl-5">日期</TableHead><TableHead>店铺</TableHead><TableHead>商品 / 样式 / 订单</TableHead><TableHead className="pr-5 text-right">操作</TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {records.map((record) => (
                   <TableRow key={`${record.store_name}-${record.date}`}>
                     <TableCell className="pl-5 font-mono text-xs">{record.date}</TableCell><TableCell>{record.store_name}</TableCell>
-                    <TableCell className="tabular-nums text-zinc-600">{record.product_rows} / {record.style_rows || 0} / {record.order_rows}</TableCell>
+                    <TableCell className="tabular-nums text-muted-foreground">{record.product_rows} / {record.style_rows || 0} / {record.order_rows}</TableCell>
                     <TableCell className="pr-5 text-right">
-                      <Button variant="ghost" size="sm" title="删除整日数据" className="text-red-600 hover:bg-red-50 hover:text-red-700" onClick={() => handleDeleteDay(record)}>
+                      <Button variant="ghost" size="sm" title="删除整日数据" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => handleDeleteDay(record)}>
                         <Trash2 className="h-3.5 w-3.5" />删除整日
                       </Button>
                     </TableCell>

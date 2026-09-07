@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react"
-import { Upload, FileCheck2 } from "lucide-react"
+import { UploadCloud, FileCheck2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface FileDropzoneProps {
@@ -59,9 +59,9 @@ export function FileDropzone({ accept, label, description, value, onChange, clas
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       className={cn(
-        "group flex cursor-pointer items-center rounded-lg border border-dashed transition-colors hover:border-foreground/30 hover:bg-zinc-50",
+        "group flex cursor-pointer items-center rounded-lg border border-dashed border-border bg-card transition-colors hover:border-ring/60 hover:bg-accent/50",
         compact ? "min-h-[82px] gap-3 px-4 py-3" : "min-h-[132px] flex-col justify-center gap-2 p-6 text-center",
-        isDragging ? "border-foreground/40 bg-zinc-50" : "border-zinc-300 bg-white",
+        isDragging && "border-ring/60 bg-accent/50",
         className
       )}
     >
@@ -73,7 +73,7 @@ export function FileDropzone({ accept, label, description, value, onChange, clas
       />
       {value ? (
         <>
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-success/10 text-success">
             <FileCheck2 className="h-4 w-4" />
           </span>
           <span className={cn("min-w-0", !compact && "text-center")}>
@@ -83,8 +83,8 @@ export function FileDropzone({ accept, label, description, value, onChange, clas
         </>
       ) : (
         <>
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-zinc-100 text-zinc-600 transition-colors group-hover:bg-zinc-200">
-            <Upload className="h-4 w-4" />
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground transition-colors group-hover:bg-accent group-hover:text-accent-foreground">
+            <UploadCloud className="h-4 w-4" />
           </span>
           <span className={cn("min-w-0", !compact && "text-center")}>
             <span className="block text-sm font-medium">{label}</span>

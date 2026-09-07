@@ -3,11 +3,11 @@ import { Search, BarChart3 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { PageHeader, StatCard, FilterBar, FilterItem, EmptyState } from "@/components/page-kit"
 import { MetricLineChart } from "@/components/metric-line-chart"
 import { getStores, getWechatAnalysis, getWechatTrend, type Store } from "@/api/client"
 
@@ -16,6 +16,15 @@ function formatNumber(v: any, digits = 2) {
   if (typeof v === "number") return v.toLocaleString("zh-CN", { maximumFractionDigits: digits })
   return v
 }
+
+const CHART_COLORS = [
+  "hsl(var(--chart-1))",
+  "hsl(var(--chart-2))",
+  "hsl(var(--chart-3))",
+  "hsl(var(--chart-4))",
+  "hsl(var(--chart-5))",
+]
+const chartColor = (i: number) => CHART_COLORS[i % CHART_COLORS.length]
 
 const kpiGroups = [
   {
@@ -116,36 +125,30 @@ export function WechatMetricsPage() {
   const kpis = data?.kpis || {}
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-2xl font-bold">微信指标</h2>
-      <Card>
-        <CardContent className="pt-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
-            <div className="space-y-2">
-              <Label>店铺</Label>
-              <Select value={storeName} onChange={(e) => setStoreName(e.target.value)}>
-                <option value="">选择店铺</option>
-                {stores.map((s) => (
-                  <option key={s.id} value={s.name}>
-                    {s.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>开始日期</Label>
-              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>结束日期</Label>
-              <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-            </div>
-            <Button onClick={handleAnalyze} disabled={loading}>
-              <Search className="h-4 w-4 mr-1" /> {loading ? "分析中..." : "分析"}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+    <div>
+      <PageHeader title="微信指标" description="按店铺和日期范围分析微信小店经营指标" />
+
+      <FilterBar>
+        <FilterItem label="店铺">
+          <Select value={storeName} onChange={(e) => setStoreName(e.target.value)}>
+            <option value="">选择店铺</option>
+            {stores.map((s) => (
+              <option key={s.id} value={s.name}>
+                {s.name}
+              </option>
+            ))}
+          </Select>
+        </FilterItem>
+        <FilterItem label="开始日期">
+          <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+        </FilterItem>
+        <FilterItem label="结束日期">
+          <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+        </FilterItem>
+        <Button onClick={handleAnalyze} disabled={loading}>
+          <Search className="h-4 w-4" /> {loading ? "分析中..." : "分析"}
+        </Button>
+      </FilterBar>
 
       {data && (
         <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -165,19 +168,18 @@ export function WechatMetricsPage() {
                     <CardTitle>{group.title}</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                       {items.map((item) => (
-                        <Card key={item.key}>
-                          <CardHeader className="pb-2">
-                            <CardDescription className="text-xs">{item.label}</CardDescription>
-                          </CardHeader>
-                          <CardContent>
-                            <CardTitle className="text-xl">
-                              {formatNumber(kpis[item.key])}{" "}
-                              {item.unit && <span className="text-sm font-normal text-muted-foreground">{item.unit}</span>}
-                            </CardTitle>
-                          </CardContent>
-                        </Card>
+                        <StatCard
+                          key={item.key}
+                          label={item.label}
+                          value={
+                            <>
+                              {formatNumber(kpis[item.key])}
+                              {item.unit && <span className="text-sm font-normal text-muted-foreground"> {item.unit}</span>}
+                            </>
+                          }
+                        />
                       ))}
                     </div>
                   </CardContent>
@@ -201,38 +203,38 @@ export function WechatMetricsPage() {
                     title: "成交与收入",
                     description: "成交金额、实际收款、净成交金额",
                     metrics: [
-                      { key: "gmv", name: "成交金额", color: "#3b82f6", unit: "元" },
-                      { key: "actual_revenue", name: "实际收款", color: "#f97316", unit: "元" },
-                      { key: "valid_gmv", name: "净成交金额", color: "#22c55e", unit: "元" },
-                      { key: "net_revenue", name: "净收入", color: "#8b5cf6", unit: "元" },
+                      { key: "gmv", name: "成交金额", unit: "元" },
+                      { key: "actual_revenue", name: "实际收款", unit: "元" },
+                      { key: "valid_gmv", name: "净成交金额", unit: "元" },
+                      { key: "net_revenue", name: "净收入", unit: "元" },
                     ],
                   },
                   {
                     title: "订单与售后",
                     description: "订单数、净订单数、退款订单",
                     metrics: [
-                      { key: "order_count", name: "订单数", color: "#8b5cf6" },
-                      { key: "valid_order_count", name: "净订单数", color: "#06b6d4" },
-                      { key: "refund_orders", name: "退款订单", color: "#ef4444" },
-                      { key: "quantity", name: "商品件数", color: "#64748b" },
+                      { key: "order_count", name: "订单数" },
+                      { key: "valid_order_count", name: "净订单数" },
+                      { key: "refund_orders", name: "退款订单" },
+                      { key: "quantity", name: "商品件数" },
                     ],
                   },
                   {
                     title: "退款与费用",
                     description: "退款金额、技术服务费、带货费用",
                     metrics: [
-                      { key: "refund_amount", name: "退款金额", color: "#ef4444", unit: "元" },
-                      { key: "tech_fee", name: "技术服务费", color: "#f59e0b", unit: "元" },
-                      { key: "commission", name: "带货费用", color: "#64748b", unit: "元" },
+                      { key: "refund_amount", name: "退款金额", unit: "元" },
+                      { key: "tech_fee", name: "技术服务费", unit: "元" },
+                      { key: "commission", name: "带货费用", unit: "元" },
                     ],
                   },
                   {
                     title: "成本与利润",
                     description: "成本、毛利润、盈亏",
                     metrics: [
-                      { key: "total_cost", name: "总成本", color: "#64748b", unit: "元" },
-                      { key: "gross_profit", name: "毛利润", color: "#22c55e", unit: "元" },
-                      { key: "profit_loss", name: "盈亏", color: "#ef4444", unit: "元" },
+                      { key: "total_cost", name: "总成本", unit: "元" },
+                      { key: "gross_profit", name: "毛利润", unit: "元" },
+                      { key: "profit_loss", name: "盈亏", unit: "元" },
                     ],
                   },
                 ].map((chart) => (
@@ -241,7 +243,7 @@ export function WechatMetricsPage() {
                     title={chart.title}
                     description={chart.description}
                     data={trend}
-                    metrics={chart.metrics}
+                    metrics={chart.metrics.map((m, i) => ({ ...m, color: chartColor(i) }))}
                   />
                 ))}
               </CardContent>
@@ -301,8 +303,8 @@ export function WechatMetricsPage() {
                       ))}
                       {data.product_metrics.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={productColumns.length} className="text-center text-muted-foreground">
-                            无数据
+                          <TableCell colSpan={productColumns.length}>
+                            <EmptyState title="无数据" hint="当前筛选条件下没有商品指标" />
                           </TableCell>
                         </TableRow>
                       )}

@@ -3,11 +3,11 @@ import { Search, Eye, EyeOff, ChevronDown, ChevronRight, Download } from "lucide
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { PageHeader, FilterBar, FilterItem, EmptyState } from "@/components/page-kit"
 import { MetricLineChart } from "@/components/metric-line-chart"
 import { getStores, getAnalysis, getTrend, type Store } from "@/api/client"
 
@@ -42,6 +42,15 @@ function downloadCsv(filename: string, rows: Record<string, any>[], headers: { k
   a.remove()
   URL.revokeObjectURL(url)
 }
+
+const CHART_COLORS = [
+  "hsl(var(--chart-1))",
+  "hsl(var(--chart-2))",
+  "hsl(var(--chart-3))",
+  "hsl(var(--chart-4))",
+  "hsl(var(--chart-5))",
+]
+const chartColor = (i: number) => CHART_COLORS[i % CHART_COLORS.length]
 
 const MONEY_COLS = ["promo_spend", "promo_gmv", "valid_order_gmv", "valid_merchant_income", "order_gmv", "merchant_income", "total_product_cost", "total_logistics_cost", "platform_fee", "total_cost", "link_gross_profit", "profit_loss", "cpc", "avg_order_gmv", "avg_valid_order_income"]
 
@@ -310,36 +319,30 @@ export function MetricsPage() {
   })
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-2xl font-bold">指标分析</h2>
-      <Card>
-        <CardContent className="pt-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
-            <div className="space-y-2">
-              <Label>店铺</Label>
-              <Select value={storeName} onChange={(e) => setStoreName(e.target.value)}>
-                <option value="">选择店铺</option>
-                {stores.map((s) => (
-                  <option key={s.id} value={s.name}>
-                    {s.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>开始日期</Label>
-              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>结束日期</Label>
-              <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-            </div>
-            <Button onClick={handleAnalyze} disabled={loading}>
-              <Search className="h-4 w-4 mr-1" /> {loading ? "分析中..." : "分析"}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+    <div>
+      <PageHeader title="指标分析" description="按店铺和日期范围分析拼多多经营指标" />
+
+      <FilterBar>
+        <FilterItem label="店铺">
+          <Select value={storeName} onChange={(e) => setStoreName(e.target.value)}>
+            <option value="">选择店铺</option>
+            {stores.map((s) => (
+              <option key={s.id} value={s.name}>
+                {s.name}
+              </option>
+            ))}
+          </Select>
+        </FilterItem>
+        <FilterItem label="开始日期">
+          <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+        </FilterItem>
+        <FilterItem label="结束日期">
+          <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+        </FilterItem>
+        <Button onClick={handleAnalyze} disabled={loading}>
+          <Search className="h-4 w-4" /> {loading ? "分析中..." : "分析"}
+        </Button>
+      </FilterBar>
 
       {data && (
         <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -407,65 +410,65 @@ export function MetricsPage() {
                     title: "成交与收入",
                     description: "推广花费、推广 GMV、订单 GMV、有效 GMV",
                     metrics: [
-                      { key: "promo_spend", name: "推广花费", color: "#ef4444", unit: "元" },
-                      { key: "promo_gmv", name: "推广 GMV", color: "#3b82f6", unit: "元" },
-                      { key: "order_gmv", name: "订单 GMV", color: "#22c55e", unit: "元" },
-                      { key: "valid_order_gmv", name: "有效 GMV", color: "#8b5cf6", unit: "元" },
-                      { key: "promo_cost_ratio", name: "推广费比", color: "#f97316", unit: "%" },
+                      { key: "promo_spend", name: "推广花费", unit: "元" },
+                      { key: "promo_gmv", name: "推广 GMV", unit: "元" },
+                      { key: "order_gmv", name: "订单 GMV", unit: "元" },
+                      { key: "valid_order_gmv", name: "有效 GMV", unit: "元" },
+                      { key: "promo_cost_ratio", name: "推广费比", unit: "%" },
                     ],
                   },
                   {
                     title: "ROI 与效率",
                     description: "推广 ROI、真实 ROI、有效 GMV ROI",
                     metrics: [
-                      { key: "promo_roi", name: "推广 ROI", color: "#ef4444" },
-                      { key: "real_roi", name: "真实 ROI", color: "#3b82f6" },
-                      { key: "valid_order_gmv_roi", name: "有效 GMV ROI", color: "#22c55e" },
+                      { key: "promo_roi", name: "推广 ROI" },
+                      { key: "real_roi", name: "真实 ROI" },
+                      { key: "valid_order_gmv_roi", name: "有效 GMV ROI" },
                     ],
                   },
                   {
                     title: "流量与点击成本",
                     description: "曝光量、点击量、CTR、CPC、CPM",
                     metrics: [
-                      { key: "exposure", name: "曝光量", color: "#f59e0b", unit: "次" },
-                      { key: "clicks", name: "点击量", color: "#06b6d4", unit: "次" },
-                      { key: "ctr", name: "CTR", color: "#ec4899", unit: "%" },
-                      { key: "cpc", name: "CPC", color: "#64748b", unit: "元" },
-                      { key: "cpm", name: "CPM", color: "#8b5cf6", unit: "元" },
+                      { key: "exposure", name: "曝光量", unit: "次" },
+                      { key: "clicks", name: "点击量", unit: "次" },
+                      { key: "ctr", name: "CTR", unit: "%" },
+                      { key: "cpc", name: "CPC", unit: "元" },
+                      { key: "cpm", name: "CPM", unit: "元" },
                     ],
                   },
                   {
                     title: "退款与取消",
                     description: "退款率、取消率、问题订单率及三阶段退款率",
                     metrics: [
-                      { key: "refund_rate", name: "退款率", color: "#ef4444", unit: "%" },
-                      { key: "cancel_rate", name: "取消率", color: "#f59e0b", unit: "%" },
-                      { key: "problem_rate", name: "问题订单率", color: "#64748b", unit: "%" },
-                      { key: "refund_unshipped_rate", name: "未发货退款率", color: "#3b82f6", unit: "%" },
-                      { key: "refund_shipped_rate", name: "已发货退款率", color: "#22c55e", unit: "%" },
-                      { key: "refund_received_rate", name: "已收货退款率", color: "#8b5cf6", unit: "%" },
+                      { key: "refund_rate", name: "退款率", unit: "%" },
+                      { key: "cancel_rate", name: "取消率", unit: "%" },
+                      { key: "problem_rate", name: "问题订单率", unit: "%" },
+                      { key: "refund_unshipped_rate", name: "未发货退款率", unit: "%" },
+                      { key: "refund_shipped_rate", name: "已发货退款率", unit: "%" },
+                      { key: "refund_received_rate", name: "已收货退款率", unit: "%" },
                     ],
                   },
                   {
                     title: "自然流量（有效）",
                     description: "自然有效订单、自然有效收入及占比",
                     metrics: [
-                      { key: "organic_valid_order_count", name: "自然有效订单", color: "#10b981", unit: "单" },
-                      { key: "organic_merchant_income", name: "自然有效收入", color: "#06b6d4", unit: "元" },
-                      { key: "organic_ratio_valid_orders", name: "自然有效订单占比", color: "#d97706", unit: "%" },
-                      { key: "organic_ratio_income", name: "自然有效收入占比", color: "#8b5cf6", unit: "%" },
+                      { key: "organic_valid_order_count", name: "自然有效订单", unit: "单" },
+                      { key: "organic_merchant_income", name: "自然有效收入", unit: "元" },
+                      { key: "organic_ratio_valid_orders", name: "自然有效订单占比", unit: "%" },
+                      { key: "organic_ratio_income", name: "自然有效收入占比", unit: "%" },
                     ],
                   },
                   {
                     title: "成本与利润",
                     description: "商品成本、物流成本、毛利、盈亏、毛利率、盈亏率",
                     metrics: [
-                      { key: "total_product_cost", name: "商品成本", color: "#f59e0b", unit: "元" },
-                      { key: "total_logistics_cost", name: "物流成本", color: "#8b5cf6", unit: "元" },
-                      { key: "link_gross_profit", name: "链接毛利", color: "#22c55e", unit: "元" },
-                      { key: "profit_loss", name: "盈亏", color: "#ef4444", unit: "元" },
-                      { key: "gross_margin_rate", name: "毛利率", color: "#3b82f6", unit: "%" },
-                      { key: "profit_loss_rate", name: "盈亏率", color: "#06b6d4", unit: "%" },
+                      { key: "total_product_cost", name: "商品成本", unit: "元" },
+                      { key: "total_logistics_cost", name: "物流成本", unit: "元" },
+                      { key: "link_gross_profit", name: "链接毛利", unit: "元" },
+                      { key: "profit_loss", name: "盈亏", unit: "元" },
+                      { key: "gross_margin_rate", name: "毛利率", unit: "%" },
+                      { key: "profit_loss_rate", name: "盈亏率", unit: "%" },
                     ],
                   },
                 ].map((chart) => (
@@ -474,7 +477,7 @@ export function MetricsPage() {
                     title={chart.title}
                     description={chart.description}
                     data={trend}
-                    metrics={chart.metrics}
+                    metrics={chart.metrics.map((m, i) => ({ ...m, color: chartColor(i) }))}
                     hiddenKeys={hiddenKpis}
                   />
                 ))}
@@ -557,8 +560,8 @@ export function MetricsPage() {
                       })}
                       {data.product_metrics.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={productColumns.length} className="text-center text-muted-foreground">
-                            无数据
+                          <TableCell colSpan={productColumns.length}>
+                            <EmptyState title="无数据" hint="当前筛选条件下没有商品指标" />
                           </TableCell>
                         </TableRow>
                       )}

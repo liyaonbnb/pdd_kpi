@@ -17,6 +17,9 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { EmptyState, FilterBar, FilterItem, PageHeader } from "@/components/page-kit"
 import {
   getStores,
   getOperationsDaily,
@@ -64,10 +67,10 @@ const metrics: MetricDefinition[] = [
 ]
 
 const platformAccent: Record<OperationsDailyPlatform["platform"], string> = {
-  pdd: "border-l-red-500",
-  douyin: "border-l-cyan-500",
-  tmall: "border-l-orange-500",
-  wechat: "border-l-emerald-500",
+  pdd: "border-l-chart-4",
+  douyin: "border-l-chart-2",
+  tmall: "border-l-chart-3",
+  wechat: "border-l-success",
 }
 
 function StoreMultiSelect({ stores, selectedStores, onChange, onApply, disabled }: StoreMultiSelectProps) {
@@ -217,7 +220,7 @@ function weekday(value: string) {
 
 function metricCellClass(metric: MetricDefinition, value: number | null | undefined) {
   return cn(
-    "whitespace-nowrap px-3 py-2.5 text-right font-mono text-xs tabular-nums",
+    "whitespace-nowrap text-right font-mono text-xs tabular-nums",
     metric.profit && typeof value === "number" && value < 0 && "bg-destructive/5 font-semibold text-destructive",
     value === null || value === undefined ? "text-muted-foreground" : "text-foreground",
   )
@@ -525,35 +528,34 @@ export function OperationsDailyPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-[1800px] flex-col gap-5">
-      <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-end 2xl:justify-between">
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+      <PageHeader
+        title="全平台运营日报"
+        description="统一查看各平台收入、订单、投放与利润，并下钻拼多多店铺日数据。"
+        actions={(
+          <Badge variant="outline" className="gap-1.5 py-1">
             <Store className="size-3.5" />
             全平台 · 主账号视图
-          </div>
-          <h2 className="text-2xl font-bold tracking-tight">全平台运营日报</h2>
-          <p className="text-sm text-muted-foreground">统一查看各平台收入、订单、投放与利润，并下钻拼多多店铺日数据。</p>
-        </div>
+          </Badge>
+        )}
+      />
 
-        <div className="flex max-w-full flex-wrap items-end gap-2 2xl:justify-end">
-          <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-            <span>拼多多矩阵店铺</span>
-            <StoreMultiSelect
-              stores={stores}
-              selectedStores={selectedStores}
-              onChange={setSelectedStores}
-              onApply={applyRange}
-              disabled={storesLoading || loading}
-            />
-          </div>
-          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-            开始日期
-            <Input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} className="w-40" />
-          </label>
-          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-            结束日期
-            <Input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} className="w-40" />
-          </label>
+      <FilterBar className="mb-0">
+        <FilterItem label="拼多多矩阵店铺">
+          <StoreMultiSelect
+            stores={stores}
+            selectedStores={selectedStores}
+            onChange={setSelectedStores}
+            onApply={applyRange}
+            disabled={storesLoading || loading}
+          />
+        </FilterItem>
+        <FilterItem label="开始日期">
+          <Input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} className="w-40" />
+        </FilterItem>
+        <FilterItem label="结束日期">
+          <Input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} className="w-40" />
+        </FilterItem>
+        <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => showRecentDays(7)}>近 7 天</Button>
           <Button variant="outline" size="sm" onClick={() => showRecentDays(14)}>近 14 天</Button>
           <Button size="sm" onClick={applyRange} disabled={loading || storesLoading || selectedStores.length === 0}>
@@ -569,7 +571,7 @@ export function OperationsDailyPage() {
             {wecomDraftSent ? "已发送" : wecomSendLoading ? "发送中" : "发送到企微"}
           </Button>
         </div>
-      </div>
+      </FilterBar>
 
       {error && (
         <Card className="border-destructive/40">
@@ -633,32 +635,34 @@ export function OperationsDailyPage() {
 
         <CardContent className="p-0">
           {loading && !report ? (
-            <div className="flex min-h-64 items-center justify-center gap-2 text-sm text-muted-foreground">
-              <RefreshCw className="size-4 animate-spin" />
-              正在汇总全平台经营数据…
+            <div className="space-y-2 p-4" aria-busy="true">
+              <Skeleton className="h-10 w-full" />
+              {Array.from({ length: 7 }).map((_, index) => (
+                <Skeleton key={index} className="h-8 w-full" />
+              ))}
             </div>
           ) : report && groups.length > 0 ? (
             <div className="max-h-[calc(100vh-280px)] overflow-auto">
               <table className="w-full min-w-[980px] border-collapse text-sm">
-                <thead className="sticky top-0 bg-card shadow-sm">
-                  <tr>
-                    <th className="sticky left-0 min-w-44 border-b bg-card px-3 py-3 text-left font-semibold">店铺 / 指标</th>
-                    <th className="sticky left-44 min-w-32 border-b border-l bg-card px-3 py-3 text-right font-semibold">期间合计</th>
+                <TableHeader className="shadow-sm">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="sticky left-0 z-20 min-w-44 border-b bg-card px-3 py-3 text-left text-[13px] font-semibold normal-case tracking-normal text-foreground">店铺 / 指标</TableHead>
+                    <TableHead className="sticky left-44 z-20 min-w-32 border-b border-l bg-card px-3 py-3 text-right text-[13px] font-semibold normal-case tracking-normal text-foreground">期间合计</TableHead>
                     {report.dates.map((date) => (
-                      <th key={date} className="min-w-28 border-b border-l bg-card px-3 py-2 text-right font-semibold">
+                      <TableHead key={date} className="min-w-28 border-b border-l bg-card px-3 py-2 text-right font-semibold normal-case tracking-normal text-foreground">
                         <div>{shortDate(date)}</div>
                         <div className="text-[11px] font-normal text-muted-foreground">{weekday(date)}</div>
-                      </th>
+                      </TableHead>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {groups.map((group, groupIndex) => {
                     const collapsed = collapsedStores.has(group.store_name)
                     return (
                       <Fragment key={group.store_name}>
-                        <tr className={cn(groupIndex === 0 ? "bg-muted/80" : "bg-muted/35")}>
-                          <th colSpan={report.dates.length + 2} className="border-y px-3 py-2 text-left">
+                        <TableRow className={cn(groupIndex === 0 ? "bg-muted/80" : "bg-muted/35")}>
+                          <TableHead colSpan={report.dates.length + 2} className="border-y px-3 py-2 text-left normal-case tracking-normal text-foreground">
                             <button
                               type="button"
                               className="flex w-full items-center gap-2 text-left"
@@ -669,45 +673,42 @@ export function OperationsDailyPage() {
                               <span className="font-semibold">{group.store_name}</span>
                               {groupIndex === 0 ? <Badge variant="outline">汇总</Badge> : qualityBadge(group.quality_counts)}
                             </button>
-                          </th>
-                        </tr>
+                          </TableHead>
+                        </TableRow>
                         {!collapsed && visibleMetrics.map((metric) => (
-                          <tr key={`${group.store_name}-${metric.key}`} className="hover:bg-muted/25">
-                            <th className="sticky left-0 border-b bg-card px-3 py-2.5 text-left text-xs font-medium">{metric.label}</th>
-                            <td className={cn(metricCellClass(metric, group.totals[metric.key]), "sticky left-44 border-b border-l bg-card font-semibold")}>
+                          <TableRow key={`${group.store_name}-${metric.key}`} className="hover:bg-muted/25">
+                            <TableHead className="sticky left-0 z-10 border-b bg-card px-3 py-2.5 text-left text-xs font-medium normal-case tracking-normal text-foreground">{metric.label}</TableHead>
+                            <TableCell className={cn(metricCellClass(metric, group.totals[metric.key]), "sticky left-44 z-10 border-b border-l bg-card py-2.5 font-semibold")}>
                               {formatValue(group.totals[metric.key], metric.format)}
-                            </td>
+                            </TableCell>
                             {report.dates.map((date) => {
                               const value = group.daily[date]?.[metric.key]
                               const quality = group.quality?.[date]
                               return (
-                                <td
+                                <TableCell
                                   key={date}
                                   title={qualityLabel(quality)}
                                   className={cn(
                                     metricCellClass(metric, value),
-                                    "border-b border-l",
+                                    "border-b border-l py-2.5",
                                     quality?.status === "partial" && "bg-muted/40",
                                     quality?.status === "missing" && "bg-destructive/5",
                                   )}
                                 >
                                   {formatValue(value, metric.format)}
-                                </td>
+                                </TableCell>
                               )
                             })}
-                          </tr>
+                          </TableRow>
                         ))}
                       </Fragment>
                     )
                   })}
-                </tbody>
+                </TableBody>
               </table>
             </div>
           ) : (
-            <div className="flex min-h-64 flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
-              <CalendarDays className="size-8" />
-              当前日期范围暂无可展示的店铺数据
-            </div>
+            <EmptyState title="当前日期范围暂无可展示的店铺数据" className="min-h-64" />
           )}
         </CardContent>
       </Card>

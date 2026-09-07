@@ -1,6 +1,4 @@
 """V2 API for the isolated deployment environment.
-app.include_router(v1_compat.router)
-
 
 The API is additive and remains isolated from the legacy production database.
 Existing test-token access is retained while V2 account authentication is
@@ -18,11 +16,12 @@ from pathlib import Path
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import psycopg
 from psycopg.types.json import Json
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 try:
@@ -31,7 +30,6 @@ except Exception:
     bcrypt = None
 
 from v2.local_workflow import run_workflow
-from v2 import v1_compat
 
 
 
@@ -98,6 +96,8 @@ def _ensure_metadata_tables() -> None:
                     primary key (user_id, platform, store_name)
                 )
             """)
+            cur.execute("alter table data_import_batches drop constraint if exists data_import_batches_data_type_check")
+            cur.execute("alter table data_import_batches add constraint data_import_batches_data_type_check check (data_type in ('orders','promotions','inventory','costs','items','bundles','stock_in','stock_out'))")
             cur.execute("""
                 create table if not exists promotion_metrics_daily (
                     id uuid primary key default gen_random_uuid(),
@@ -523,12 +523,14 @@ def _b64url(data: bytes) -> str:
 
 def _issue_jwt(user: dict[str, Any]) -> str:
     header = _b64url(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode("utf-8"))
+    stores = user.get("allowed_stores", [])
+    flat_stores = [s.get("store_name") if isinstance(s, dict) else s for s in stores]
     payload = _b64url(json.dumps({
         "sub": user["username"],
         "role": user.get("role", "sub"),
-        "allowed_stores": user.get("allowed_stores", []),
+        "allowed_stores": flat_stores,
         "allowed_pages": user.get("allowed_pages", []),
-        "exp": int(time.time()) + 86400,
+        "exp": int(time.time()) + 86400 * 7,
     }, separators=(",", ":")).encode("utf-8"))
     signature = _b64url(hmac.new(AUTH_SECRET.encode("utf-8"), f"{header}.{payload}".encode("ascii"), hashlib.sha256).digest())
     return f"{header}.{payload}.{signature}"
@@ -585,6 +587,17 @@ def _require_v2_admin(x_v2_test_token: str | None, authorization: str | None) ->
     return user
 
 
+def _require_user_token(x_v2_test_token: str | None, authorization: str | None) -> dict[str, Any]:
+    """写操作鉴权（合并后统一入口）：测试令牌 或 Bearer（V2 token / V1 形态 JWT）。"""
+    if TEST_TOKEN and x_v2_test_token == TEST_TOKEN:
+        return {"username": "test-token", "role": "master"}
+    token = authorization[7:] if authorization and authorization.lower().startswith("bearer ") else None
+    claims = _verify_auth_token(token) or _verify_jwt(token)
+    if not claims:
+        raise HTTPException(status_code=401, detail="需要登录")
+    return claims
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     try:
@@ -616,7 +629,7 @@ def v2_login(payload: V2LoginIn) -> dict[str, Any]:
 
 
 @app.get("/api/v2/auth/me")
-def v2_me(authorization: str | None = Header(default=None), x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
+def v2_me(x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
     if TEST_TOKEN and x_v2_test_token == TEST_TOKEN:
         return {"username": "test-token", "role": "master", "allowed_stores": [], "allowed_pages": [], "is_active": True}
     token = authorization[7:] if authorization and authorization.lower().startswith("bearer ") else None
@@ -644,7 +657,7 @@ def legacy_login(payload: LegacyLoginIn) -> dict[str, Any]:
         matched = False
     if not matched:
         raise HTTPException(status_code=401, detail="账号或密码错误")
-    return {"access_token": _issue_jwt(user), "token_type": "bearer", "user": _safe_user(user)}
+    return {"access_token": _issue_jwt(user), "token_type": "bearer", "role": user.get("role", "sub"), "require_password_change": not user["password_changed"], "user": _safe_user(user)}
 
 
 @app.get("/api/auth/me")
@@ -656,7 +669,35 @@ def legacy_me(authorization: str | None = Header(default=None)) -> dict[str, Any
     user = _load_v2_user(str(claims.get("sub") or ""))
     if not user or not user["is_active"]:
         raise HTTPException(status_code=401, detail="账号不可用")
-    return _safe_user(user)
+    result = _safe_user(user)
+    result["allowed_stores"] = [s["store_name"] if isinstance(s, dict) else s for s in user["allowed_stores"]]
+    result["require_password_change"] = not user["password_changed"]
+    return result
+
+
+@app.post("/api/auth/change-password")
+def legacy_change_password(payload: dict[str, str], authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """V1 兼容改密：校验旧密码后更新 v2_users，并重新签发 JWT。"""
+    if bcrypt is None:
+        raise HTTPException(status_code=503, detail="认证组件尚未安装")
+    token = authorization[7:] if authorization and authorization.lower().startswith("bearer ") else None
+    claims = _verify_jwt(token) or _verify_auth_token(token)
+    if not claims:
+        raise HTTPException(status_code=401, detail="登录已失效")
+    user = _load_v2_user(str(claims.get("sub") or ""))
+    if not user or not user["is_active"]:
+        raise HTTPException(status_code=401, detail="账号不可用")
+    old_password = str(payload.get("old_password") or "")
+    new_password = str(payload.get("new_password") or "")
+    if not bcrypt.checkpw(old_password.encode("utf-8"), user["password_hash"].encode("utf-8")):
+        raise HTTPException(status_code=400, detail="原密码错误")
+    if len(new_password) < 8 or new_password.isalpha() or new_password.isdigit():
+        raise HTTPException(status_code=400, detail="新密码至少 8 位且需包含字母和数字")
+    new_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("update v2_users set password_hash=%s, password_changed=true where username=%s", (new_hash, user["username"]))
+    return {"access_token": _issue_jwt(user), "token_type": "bearer"}
 
 
 @app.get("/api/v2/users")
@@ -743,9 +784,8 @@ def list_stores(platform: str | None = None) -> list[dict[str, Any]]:
 
 
 @app.post("/api/v2/stores")
-def create_store(payload: StoreIn, x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN:
-        raise HTTPException(status_code=401, detail="需要测试令牌")
+def create_store(payload: StoreIn, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
     platform = payload.platform.strip().lower()
     if platform not in {"pdd", "douyin", "tmall", "wechat"}:
         raise HTTPException(status_code=400, detail="平台类型无效")
@@ -760,9 +800,8 @@ def create_store(payload: StoreIn, x_v2_test_token: str | None = Header(default=
 
 
 @app.post("/api/v2/stores/warehouse")
-def assign_store_warehouse(payload: StoreWarehouseIn, x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN:
-        raise HTTPException(status_code=401, detail="需要测试令牌")
+def assign_store_warehouse(payload: StoreWarehouseIn, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.transaction():
             with conn.cursor() as cur:
@@ -792,8 +831,7 @@ def import_file(
     file: UploadFile = File(...),
     x_v2_test_token: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN:
-        raise HTTPException(status_code=401, detail="需要测试令牌")
+    _require_user_token(x_v2_test_token, authorization)
     if mode not in {"preview", "import"}:
         raise HTTPException(status_code=400, detail="mode 只能是 preview 或 import")
     if data_type not in {"orders", "promotions"}:
@@ -817,9 +855,8 @@ def import_file(
 
 
 @app.post("/api/v2/imports/preview")
-def preview_import(payload: ImportPayload, x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN:
-        raise HTTPException(status_code=401, detail="需要测试令牌")
+def preview_import(payload: ImportPayload, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
     if payload.data_type not in {"orders", "promotions"}:
         raise HTTPException(status_code=400, detail="当前支持订单或推广数据")
     if payload.data_type == "promotions" and not payload.metric_date:
@@ -830,9 +867,8 @@ def preview_import(payload: ImportPayload, x_v2_test_token: str | None = Header(
 
 
 @app.get("/api/v2/imports/batches")
-def list_import_batches(x_v2_test_token: str | None = Header(default=None)) -> list[dict[str, Any]]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN:
-        raise HTTPException(status_code=401, detail="需要测试令牌")
+def list_import_batches(x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> list[dict[str, Any]]:
+    _require_user_token(x_v2_test_token, authorization)
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.cursor() as cur:
             cur.execute("select id,platform,store_name,data_type,source_filename,period_from,period_to,status,row_count,error_count,error_message,created_at,completed_at from data_import_batches order by created_at desc limit 200")
@@ -840,9 +876,8 @@ def list_import_batches(x_v2_test_token: str | None = Header(default=None)) -> l
 
 
 @app.get("/api/v2/promotions")
-def list_promotions(store_name: str | None = None, metric_date: date | None = None, x_v2_test_token: str | None = Header(default=None)) -> list[dict[str, Any]]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN:
-        raise HTTPException(status_code=401, detail="需要测试令牌")
+def list_promotions(store_name: str | None = None, metric_date: date | None = None, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> list[dict[str, Any]]:
+    _require_user_token(x_v2_test_token, authorization)
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.cursor() as cur:
             cur.execute("select id,import_batch_id,platform,store_name,metric_date,product_id,style_id,spend,gmv,orders,exposure,clicks,created_at from promotion_metrics_daily where (%s::varchar is null or store_name=%s::varchar) and (%s::date is null or metric_date=%s::date) order by metric_date desc, store_name, product_id limit 5000", (store_name,store_name,metric_date,metric_date))
@@ -850,9 +885,8 @@ def list_promotions(store_name: str | None = None, metric_date: date | None = No
 
 
 @app.post("/api/v2/imports")
-def import_rows(payload: ImportPayload, x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN:
-        raise HTTPException(status_code=401, detail="需要测试令牌")
+def import_rows(payload: ImportPayload, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
     if payload.data_type not in {"orders", "promotions"}:
         raise HTTPException(status_code=400, detail="当前支持订单或推广数据")
     preview = preview_import(payload, x_v2_test_token)
@@ -891,9 +925,8 @@ def import_rows(payload: ImportPayload, x_v2_test_token: str | None = Header(def
 
 
 @app.post("/api/v2/imports/batches/{batch_id}/rollback")
-def rollback_import_batch(batch_id: UUID, x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN:
-        raise HTTPException(status_code=401, detail="需要测试令牌")
+def rollback_import_batch(batch_id: UUID, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.transaction():
             with conn.cursor() as cur:
@@ -920,9 +953,8 @@ def rollback_import_batch(batch_id: UUID, x_v2_test_token: str | None = Header(d
 
 
 @app.put("/api/v2/config/inventory-date")
-def set_inventory_date(payload: dict[str, str], x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN:
-        raise HTTPException(status_code=401, detail="需要测试令牌")
+def set_inventory_date(payload: dict[str, str], x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
     enabled_from = payload.get("enabled_from")
     if not enabled_from:
         raise HTTPException(status_code=400, detail="请填写库存启用日")
@@ -944,9 +976,8 @@ def list_items() -> list[dict[str, Any]]:
 
 
 @app.post("/api/v2/items")
-def create_item(payload: ItemIn, x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN:
-        raise HTTPException(status_code=401, detail="需要测试令牌")
+def create_item(payload: ItemIn, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.cursor() as cur:
             try:
@@ -974,9 +1005,8 @@ def list_bundles() -> list[dict[str, Any]]:
 
 
 @app.post("/api/v2/bundles")
-def create_bundle(payload: BundleIn, x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN:
-        raise HTTPException(status_code=401, detail="需要测试令牌")
+def create_bundle(payload: BundleIn, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
     with psycopg.connect(DATABASE_URL) as conn:
         try:
             with conn.cursor() as cur:
@@ -993,6 +1023,31 @@ def create_bundle(payload: BundleIn, x_v2_test_token: str | None = Header(defaul
     return {"id": str(bundle_id), "version_id": str(version_id), "code": payload.code}
 
 
+class BundleUpdateIn(BaseModel):
+    name: str | None = None
+    estimated_shipping_fee: float | None = None
+
+
+@app.patch("/api/v2/bundles/{bundle_code}")
+def update_bundle(bundle_code: str, payload: BundleUpdateIn, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """更新组合基础属性（名称/预估快递费），不触碰 BOM 版本。"""
+    _require_user_token(x_v2_test_token, authorization)
+    if payload.name is None and payload.estimated_shipping_fee is None:
+        raise HTTPException(status_code=400, detail="没有要更新的字段")
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            if payload.name is not None:
+                cur.execute("update bundles set name=%s, updated_at=now() where code=%s and is_active=true", (payload.name, bundle_code))
+            if payload.estimated_shipping_fee is not None:
+                if payload.estimated_shipping_fee < 0:
+                    raise HTTPException(status_code=400, detail="快递费不能为负")
+                cur.execute("update bundles set estimated_shipping_fee=%s, updated_at=now() where code=%s and is_active=true", (Decimal(str(payload.estimated_shipping_fee)), bundle_code))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail=f"组合不存在：{bundle_code}")
+        conn.commit()
+    return {"code": bundle_code, "status": "updated"}
+
+
 @app.get("/api/v2/listings")
 def list_listings() -> list[dict[str, Any]]:
     with psycopg.connect(DATABASE_URL) as conn:
@@ -1002,9 +1057,8 @@ def list_listings() -> list[dict[str, Any]]:
 
 
 @app.post("/api/v2/listings")
-def create_listing(payload: ListingMappingIn, x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN:
-        raise HTTPException(status_code=401, detail="需要测试令牌")
+def create_listing(payload: ListingMappingIn, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.transaction():
             with conn.cursor() as cur:
@@ -1020,11 +1074,68 @@ def create_listing(payload: ListingMappingIn, x_v2_test_token: str | None = Head
     return {"id": str(mapping_id), "status": "created"}
 
 
+@app.get("/api/v2/costs/bundles")
+def list_bundle_costs() -> list[dict[str, Any]]:
+    """组合成本（只读）：产品成本 = Σ组件×各仓存量加权均价，无库存回退最新成本版本；物流成本 = 预估快递费。"""
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                select b.code bundle_code, b.name bundle_name, b.estimated_shipping_fee,
+                       coalesce(sum(bc.quantity * ic.unit_cost), 0) as product_cost
+                from bundles b
+                left join lateral (
+                    select * from bundle_versions where bundle_id = b.id and status = 'active'
+                    order by version_no desc limit 1
+                ) bv on true
+                left join bundle_components bc on bc.bundle_version_id = bv.id
+                left join lateral (
+                    select coalesce(
+                        (select sum(ib.sellable_qty * ib.average_unit_cost) / nullif(sum(ib.sellable_qty), 0)
+                         from inventory_balances ib where ib.item_id = bc.item_id),
+                        (select cv.unit_cost from item_cost_versions cv where cv.item_id = bc.item_id
+                         order by cv.effective_from desc, cv.created_at desc limit 1),
+                        0
+                    ) as unit_cost
+                ) ic on true
+                where b.is_active = true
+                group by b.id, b.code, b.name, b.estimated_shipping_fee
+                order by b.code
+            """)
+            return _row_dict(cur)
+
+
+@app.get("/api/v2/costs/unmapped")
+def list_unmapped_listings() -> dict[str, Any]:
+    """未映射链接治理（只读）：订单里出现但没有链接映射的 product_id 组合。"""
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                select o.platform, o.store_name, l.product_id,
+                       max(l.raw_payload->>'product_name') as product_name,
+                       l.style_id,
+                       max(l.raw_payload->>'style_name') as style_name,
+                       count(distinct o.order_id) as order_count,
+                       min(o.payment_time::date) as first_date
+                from platform_order_lines l
+                join platform_orders o on o.id = l.order_id
+                where not exists (
+                    select 1 from platform_listing_mappings m
+                    where m.platform = o.platform and m.store_name = o.store_name
+                      and m.product_id = l.product_id
+                      and coalesce(m.style_id, '') = coalesce(l.style_id, '')
+                )
+                group by o.platform, o.store_name, l.product_id, l.style_id
+                order by order_count desc
+            """)
+            rows = _row_dict(cur)
+            return {"rows": rows, "total": len(rows)}
+
+
 @app.get("/api/v2/inventory/balances")
 def list_balances() -> list[dict[str, Any]]:
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.cursor() as cur:
-            cur.execute("""select w.code warehouse_code,w.name warehouse_name,i.code item_code,i.name item_name,ib.sellable_qty,ib.average_unit_cost,ib.total_average_cost,ib.updated_at from inventory_balances ib join warehouses w on w.id=ib.warehouse_id join inventory_items i on i.id=ib.item_id order by w.code,i.code""")
+            cur.execute("""with out7 as (select warehouse_id,item_id,sum(-quantity) out_qty from inventory_transactions where transaction_type='other_out' and (occurred_at at time zone 'Asia/Shanghai')::date between (now() at time zone 'Asia/Shanghai')::date - 7 and (now() at time zone 'Asia/Shanghai')::date - 1 group by warehouse_id,item_id) select w.code warehouse_code,w.name warehouse_name,i.code item_code,i.name item_name,ib.sellable_qty,ib.average_unit_cost,ib.total_average_cost,ib.updated_at,round(coalesce(o.out_qty,0)/7.0,4) avg_daily_out,round(coalesce(o.out_qty,0)/7.0*3,4) threshold_qty from inventory_balances ib join warehouses w on w.id=ib.warehouse_id join inventory_items i on i.id=ib.item_id left join out7 o on o.warehouse_id=ib.warehouse_id and o.item_id=ib.item_id order by w.code,i.code""")
             return _row_dict(cur)
 
 
@@ -1037,18 +1148,252 @@ def list_batches(status: str | None = None) -> list[dict[str, Any]]:
 
 
 @app.get("/api/v2/inventory/ledger")
-def list_ledger(limit: int = 200) -> list[dict[str, Any]]:
+def list_ledger(
+    limit: int = 200,
+    offset: int = 0,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    warehouse: str | None = None,
+    item_code: str | None = None,
+    transaction_type: str | None = None,
+    biz_type: str | None = None,
+) -> list[dict[str, Any]]:
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.cursor() as cur:
-            cur.execute("""select t.id,t.transaction_type,w.code warehouse_code,i.code item_code,t.quantity,t.batch_unit_cost,t.average_unit_cost,t.reference_type,t.reference_id,t.occurred_at from inventory_transactions t join warehouses w on w.id=t.warehouse_id join inventory_items i on i.id=t.item_id order by t.occurred_at desc limit %s""", (min(limit,1000),))
+            cur.execute("""select t.id,t.transaction_type,t.biz_type,w.code warehouse_code,i.code item_code,t.quantity,t.batch_unit_cost,t.average_unit_cost,t.reference_type,t.reference_id,t.occurred_at from inventory_transactions t join warehouses w on w.id=t.warehouse_id join inventory_items i on i.id=t.item_id where (%s::date is null or (t.occurred_at at time zone 'Asia/Shanghai')::date >= %s::date) and (%s::date is null or (t.occurred_at at time zone 'Asia/Shanghai')::date <= %s::date) and (%s::varchar is null or w.code = upper(%s::varchar) or w.name = %s::varchar) and (%s::varchar is null or i.code = %s::varchar) and (%s::varchar is null or t.transaction_type = %s::varchar) and (%s::varchar is null or t.biz_type = %s::varchar) order by t.occurred_at desc limit %s offset %s""", (start_date, start_date, end_date, end_date, warehouse, warehouse, warehouse, item_code, item_code, transaction_type, transaction_type, biz_type, biz_type, min(limit, 1000), max(offset, 0)))
             return _row_dict(cur)
 
 
+@app.get("/api/v2/inventory/inbound-docs")
+def list_inbound_docs(
+    start_date: date | None = None,
+    end_date: date | None = None,
+    warehouse: str | None = None,
+    biz_type: str | None = None,
+) -> list[dict[str, Any]]:
+    """入库单报表（只读）：把入库流水按单号聚合，含网店管家导入的采购入库/其它入库单。"""
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                select t.reference_id as doc_no,
+                       coalesce(t.biz_type, '未标注类型') as biz_type,
+                       w.code as warehouse_code, w.name as warehouse_name,
+                       min((t.occurred_at at time zone 'Asia/Shanghai')::date) as doc_date,
+                       count(distinct t.item_id) as line_count,
+                       sum(t.quantity) as total_qty,
+                       coalesce(sum(t.quantity * t.batch_unit_cost), 0) as total_amount
+                from inventory_transactions t
+                join warehouses w on w.id = t.warehouse_id
+                where t.quantity > 0 and t.reference_id <> ''
+                  and (%s::date is null or (t.occurred_at at time zone 'Asia/Shanghai')::date >= %s::date)
+                  and (%s::date is null or (t.occurred_at at time zone 'Asia/Shanghai')::date <= %s::date)
+                  and (%s::varchar is null or w.code = upper(%s::varchar) or w.name = %s::varchar)
+                  and (%s::varchar is null or t.biz_type = %s::varchar)
+                group by t.reference_id, coalesce(t.biz_type, '未标注类型'), w.code, w.name
+                order by doc_date desc, t.reference_id
+                limit 2000
+            """, (start_date, start_date, end_date, end_date, warehouse, warehouse, warehouse, biz_type, biz_type))
+            return _row_dict(cur)
+
+
+@app.get("/api/v2/inventory/batches/{batch_id}/usage")
+def get_batch_usage(batch_id: str) -> dict[str, Any]:
+    """批次出入库明细（只读）：批次信息 + 全部出入库流水，追溯每批货出给了哪些单。"""
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                select b.id, b.batch_no, w.code warehouse_code, w.name warehouse_name, i.code item_code, i.name item_name,
+                       b.received_qty, b.remaining_qty, b.unit_cost, b.stock_status, b.received_at
+                from inventory_batches b
+                join warehouses w on w.id = b.warehouse_id
+                join inventory_items i on i.id = b.item_id
+                where b.id = %s
+            """, (batch_id,))
+            rows = _row_dict(cur)
+            if not rows:
+                raise HTTPException(status_code=404, detail="批次不存在")
+            cur.execute("""
+                select t.transaction_type, t.biz_type, t.quantity, t.batch_unit_cost, t.reference_type, t.reference_id,
+                       t.store_name, t.sale_amount, t.occurred_at
+                from inventory_transactions t
+                where t.batch_id = %s
+                order by t.occurred_at
+                limit 1000
+            """, (batch_id,))
+            return {"batch": rows[0], "transactions": _row_dict(cur)}
+
+
+@app.get("/api/v2/inventory/sales-by-store")
+def sales_by_store(
+    group_by: str = "store",
+    start_date: date | None = None,
+    end_date: date | None = None,
+    store: str | None = None,
+) -> list[dict[str, Any]]:
+    """店铺销售报表（只读，实际发货口径）：基于出库流水的店铺与销售金额聚合。
+    group_by=store 按店铺汇总；group_by=day 按店铺按天。销量/成本为批次成本口径，销售额为网店管家出库金额。"""
+    if group_by not in {"store", "day", "store_item"}:
+        raise HTTPException(status_code=400, detail="group_by 只能是 store、day 或 store_item")
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            if group_by == "store":
+                cur.execute("""
+                    select coalesce(t.store_name, '未标注店铺') as store_name,
+                           sum(-t.quantity) as out_qty,
+                           coalesce(sum(t.sale_amount), 0) as sale_amount,
+                           coalesce(sum(-t.quantity * t.batch_unit_cost), 0) as cost_amount
+                    from inventory_transactions t
+                    where t.transaction_type = 'other_out'
+                      and (%s::date is null or (t.occurred_at at time zone 'Asia/Shanghai')::date >= %s::date)
+                      and (%s::date is null or (t.occurred_at at time zone 'Asia/Shanghai')::date <= %s::date)
+                      and (%s::varchar is null or t.store_name = %s::varchar)
+                    group by 1
+                    order by sale_amount desc
+                """, (start_date, start_date, end_date, end_date, store, store))
+            elif group_by == "store_item":
+                cur.execute("""
+                    select coalesce(t.store_name, '未标注店铺') as store_name,
+                           i.code as item_code, i.name as item_name,
+                           sum(-t.quantity) as out_qty,
+                           coalesce(sum(t.sale_amount), 0) as sale_amount,
+                           coalesce(sum(-t.quantity * t.batch_unit_cost), 0) as cost_amount
+                    from inventory_transactions t
+                    join inventory_items i on i.id = t.item_id
+                    where t.transaction_type = 'other_out'
+                      and (%s::date is null or (t.occurred_at at time zone 'Asia/Shanghai')::date >= %s::date)
+                      and (%s::date is null or (t.occurred_at at time zone 'Asia/Shanghai')::date <= %s::date)
+                      and (%s::varchar is null or t.store_name = %s::varchar)
+                    group by 1, 2, 3
+                    order by sale_amount desc
+                    limit 5000
+                """, (start_date, start_date, end_date, end_date, store, store))
+            else:
+                cur.execute("""
+                    select (t.occurred_at at time zone 'Asia/Shanghai')::date as period,
+                           coalesce(t.store_name, '未标注店铺') as store_name,
+                           sum(-t.quantity) as out_qty,
+                           coalesce(sum(t.sale_amount), 0) as sale_amount,
+                           coalesce(sum(-t.quantity * t.batch_unit_cost), 0) as cost_amount
+                    from inventory_transactions t
+                    where t.transaction_type = 'other_out'
+                      and (%s::date is null or (t.occurred_at at time zone 'Asia/Shanghai')::date >= %s::date)
+                      and (%s::date is null or (t.occurred_at at time zone 'Asia/Shanghai')::date <= %s::date)
+                      and (%s::varchar is null or t.store_name = %s::varchar)
+                    group by 1, 2
+                    order by 1, 2
+                """, (start_date, start_date, end_date, end_date, store, store))
+            return _row_dict(cur)
+
+
+@app.get("/api/v2/inventory/ledger/biz-types")
+def list_ledger_biz_types(direction: str | None = None) -> list[str]:
+    """台账中出现过的业务类型（入库原因/出库类型等原始值），供筛选下拉。direction=in 看出库为负，out 看出库。"""
+    sign = ""
+    if direction == "in":
+        sign = "and t.quantity > 0"
+    elif direction == "out":
+        sign = "and t.quantity < 0"
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"select distinct t.biz_type from inventory_transactions t where t.biz_type is not null {sign} order by 1")
+            return [row[0] for row in cur.fetchall()]
+
+
+@app.get("/api/v2/inventory/ledger/summary")
+def ledger_summary(
+    group_by: str = "day",
+    start_date: date | None = None,
+    end_date: date | None = None,
+    warehouse: str | None = None,
+    item_code: str | None = None,
+) -> list[dict[str, Any]]:
+    """按天/按月汇总的库存台账：期初/入库/出库/结存（数量+金额，金额按批次成本口径）。"""
+    if group_by not in {"day", "month"}:
+        raise HTTPException(status_code=400, detail="group_by 只能是 day 或 month")
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                with base as (
+                    select t.quantity, t.batch_unit_cost,
+                           (t.occurred_at at time zone 'Asia/Shanghai') as local_ts,
+                           w.code as warehouse_code, w.name as warehouse_name,
+                           i.code as item_code, i.name as item_name
+                    from inventory_transactions t
+                    join warehouses w on w.id = t.warehouse_id
+                    join inventory_items i on i.id = t.item_id
+                    where (%s::varchar is null or w.code = upper(%s::varchar) or w.name = %s::varchar)
+                      and (%s::varchar is null or i.code = %s::varchar)
+                ),
+                agg as (
+                    select date_trunc(%s, local_ts)::date as period,
+                           warehouse_code, warehouse_name, item_code, item_name,
+                           coalesce(sum(quantity) filter (where quantity > 0), 0) as in_qty,
+                           coalesce(sum(quantity * batch_unit_cost) filter (where quantity > 0), 0) as in_amount,
+                           coalesce(-sum(quantity) filter (where quantity < 0), 0) as out_qty,
+                           coalesce(-sum(quantity * batch_unit_cost) filter (where quantity < 0), 0) as out_amount,
+                           sum(quantity) as net_qty,
+                           sum(quantity * batch_unit_cost) as net_amount
+                    from base
+                    where (%s::date is null or local_ts::date >= %s::date)
+                      and (%s::date is null or local_ts::date <= %s::date)
+                    group by 1, warehouse_code, warehouse_name, item_code, item_name
+                )
+                select a.period, a.warehouse_code, a.warehouse_name, a.item_code, a.item_name,
+                       coalesce((select sum(b.quantity) from base b where b.warehouse_code = a.warehouse_code and b.item_code = a.item_code and b.local_ts < a.period), 0) as opening_qty,
+                       coalesce((select sum(b.quantity * b.batch_unit_cost) from base b where b.warehouse_code = a.warehouse_code and b.item_code = a.item_code and b.local_ts < a.period), 0) as opening_amount,
+                       a.in_qty, a.in_amount, a.out_qty, a.out_amount,
+                       coalesce((select sum(b.quantity) from base b where b.warehouse_code = a.warehouse_code and b.item_code = a.item_code and b.local_ts < a.period), 0) + a.net_qty as closing_qty,
+                       coalesce((select sum(b.quantity * b.batch_unit_cost) from base b where b.warehouse_code = a.warehouse_code and b.item_code = a.item_code and b.local_ts < a.period), 0) + a.net_amount as closing_amount
+                from agg a
+                order by a.period desc, a.warehouse_code, a.item_code
+                limit 5000
+            """, (warehouse, warehouse, warehouse, item_code, item_code, group_by, start_date, start_date, end_date, end_date))
+            return _row_dict(cur)
+
+
+@app.get("/api/v2/inventory/ledger/summary/export")
+def ledger_summary_export(
+    group_by: str = "day",
+    start_date: date | None = None,
+    end_date: date | None = None,
+    warehouse: str | None = None,
+    item_code: str | None = None,
+) -> Response:
+    """台账汇总导出 Excel（只读）：与 ledger/summary 同参数、同口径。"""
+    from openpyxl import Workbook
+
+    rows = ledger_summary(group_by=group_by, start_date=start_date, end_date=end_date, warehouse=warehouse, item_code=item_code)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "台账汇总"
+    headers = ["期间", "仓库", "单品编码", "单品名称", "期初数量", "期初金额", "入库数量", "入库金额", "出库数量", "出库金额", "结存数量", "结存金额"]
+    ws.append(headers)
+    money_cols = {6, 8, 10, 12}
+    for r in rows:
+        ws.append([
+            str(r["period"]), r["warehouse_name"] or r["warehouse_code"], r["item_code"], r["item_name"],
+            float(r["opening_qty"]), float(r["opening_amount"]), float(r["in_qty"]), float(r["in_amount"]),
+            float(r["out_qty"]), float(r["out_amount"]), float(r["closing_qty"]), float(r["closing_amount"]),
+        ])
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            cell.number_format = "#,##0.00" if cell.column in money_cols else "#,##0"
+    for idx, width in enumerate([12, 14, 20, 28, 10, 12, 10, 12, 10, 12, 10, 12], start=1):
+        ws.column_dimensions[ws.cell(row=1, column=idx).column_letter].width = width
+    buf = io.BytesIO()
+    wb.save(buf)
+    filename = f"台账汇总_{start_date or 'all'}_{end_date or 'all'}.xlsx"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
 @app.post("/api/v2/inventory/adjustments")
-def create_inventory_adjustment(payload: InventoryAdjustmentIn, x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
+def create_inventory_adjustment(payload: InventoryAdjustmentIn, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
     """支持其它入库/其它出库，所有变更都落库存台账。"""
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN:
-        raise HTTPException(status_code=401, detail="需要测试令牌")
+    _require_user_token(x_v2_test_token, authorization)
     if payload.transaction_type not in {"other_in", "other_out"}:
         raise HTTPException(status_code=400, detail="只支持 other_in 或 other_out")
     with psycopg.connect(DATABASE_URL) as conn:
@@ -1068,7 +1413,7 @@ def create_inventory_adjustment(payload: InventoryAdjustmentIn, x_v2_test_token:
                     batch_id = cur.fetchone()[0]
                     new_total = (Decimal(bal[1]) if bal else Decimal("0")) + payload.quantity * payload.unit_cost
                     cur.execute("insert into inventory_balances(warehouse_id,item_id,sellable_qty,total_average_cost) values(%s,%s,%s,%s) on conflict(warehouse_id,item_id) do update set sellable_qty=inventory_balances.sellable_qty+excluded.sellable_qty,total_average_cost=inventory_balances.total_average_cost+excluded.total_average_cost,updated_at=now()", (warehouse_id, item_id, payload.quantity, payload.quantity * payload.unit_cost))
-                    cur.execute("insert into inventory_transactions(warehouse_id,item_id,batch_id,transaction_type,quantity,batch_unit_cost,average_unit_cost,reference_type,reference_id,idempotency_key,occurred_at) values(%s,%s,%s,'other_in',%s,%s,%s,'adjustment',%s,%s,now())", (warehouse_id, item_id, batch_id, payload.quantity, payload.unit_cost, new_total / (available + payload.quantity) if available + payload.quantity else payload.unit_cost, payload.reference_id, f"other_in:{payload.reference_id}:{payload.item_code}"))
+                    cur.execute("insert into inventory_transactions(warehouse_id,item_id,batch_id,transaction_type,quantity,batch_unit_cost,average_unit_cost,reference_type,reference_id,idempotency_key,occurred_at,biz_type) values(%s,%s,%s,'other_in',%s,%s,%s,'adjustment',%s,%s,now(),'其它入库')", (warehouse_id, item_id, batch_id, payload.quantity, payload.unit_cost, new_total / (available + payload.quantity) if available + payload.quantity else payload.unit_cost, payload.reference_id, f"other_in:{payload.reference_id}:{payload.item_code}"))
                 else:
                     remaining = payload.quantity
                     cur.execute("select id,remaining_qty,unit_cost from inventory_batches where warehouse_id=%s and item_id=%s and stock_status='sellable' and remaining_qty>0 order by received_at,id for update", (warehouse_id, item_id))
@@ -1076,7 +1421,7 @@ def create_inventory_adjustment(payload: InventoryAdjustmentIn, x_v2_test_token:
                         take = min(Decimal(batch_qty), remaining)
                         remaining -= take
                         cur.execute("update inventory_batches set remaining_qty=remaining_qty-%s where id=%s", (take, batch_id))
-                        cur.execute("insert into inventory_transactions(warehouse_id,item_id,batch_id,transaction_type,quantity,batch_unit_cost,average_unit_cost,reference_type,reference_id,idempotency_key,occurred_at) values(%s,%s,%s,'other_out',%s,%s,%s,'adjustment',%s,%s,now())", (warehouse_id, item_id, batch_id, -take, batch_cost, average, payload.reference_id, f"other_out:{payload.reference_id}:{payload.item_code}:{batch_id}"))
+                        cur.execute("insert into inventory_transactions(warehouse_id,item_id,batch_id,transaction_type,quantity,batch_unit_cost,average_unit_cost,reference_type,reference_id,idempotency_key,occurred_at,biz_type) values(%s,%s,%s,'other_out',%s,%s,%s,'adjustment',%s,%s,now(),'其它出库')", (warehouse_id, item_id, batch_id, -take, batch_cost, average, payload.reference_id, f"other_out:{payload.reference_id}:{payload.item_code}:{batch_id}"))
                         if remaining <= 0:
                             break
                     cur.execute("update inventory_balances set sellable_qty=sellable_qty-%s,total_average_cost=greatest(0,total_average_cost-%s),updated_at=now() where warehouse_id=%s and item_id=%s", (payload.quantity, payload.quantity * average, warehouse_id, item_id))
@@ -1084,9 +1429,8 @@ def create_inventory_adjustment(payload: InventoryAdjustmentIn, x_v2_test_token:
 
 
 @app.post("/api/v2/inventory/opening")
-def create_opening(payload: OpeningIn, x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN:
-        raise HTTPException(status_code=401, detail="需要测试令牌")
+def create_opening(payload: OpeningIn, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.transaction():
             with conn.cursor() as cur:
@@ -1094,7 +1438,7 @@ def create_opening(payload: OpeningIn, x_v2_test_token: str | None = Header(defa
                 batch_id = uuid4()
                 cur.execute("insert into inventory_batches(id,warehouse_id,item_id,batch_no,received_at,received_qty,remaining_qty,unit_cost) values(%s,%s,%s,%s,now(),%s,%s,%s) returning id", (batch_id,warehouse_id,item_id,payload.batch_no,payload.quantity,payload.quantity,payload.unit_cost))
                 cur.execute("insert into inventory_balances(warehouse_id,item_id,sellable_qty,total_average_cost) values(%s,%s,%s,%s) on conflict(warehouse_id,item_id) do update set sellable_qty=inventory_balances.sellable_qty+excluded.sellable_qty,total_average_cost=inventory_balances.total_average_cost+excluded.total_average_cost,updated_at=now()", (warehouse_id,item_id,payload.quantity,payload.quantity*payload.unit_cost))
-                cur.execute("insert into inventory_transactions(warehouse_id,item_id,batch_id,transaction_type,quantity,batch_unit_cost,average_unit_cost,reference_type,reference_id,idempotency_key,occurred_at) values(%s,%s,%s,'opening',%s,%s,%s,'opening',%s,%s,now())", (warehouse_id,item_id,batch_id,payload.quantity,payload.unit_cost,payload.unit_cost,payload.batch_no,f"opening:{payload.warehouse_code}:{payload.item_code}:{payload.batch_no}"))
+                cur.execute("insert into inventory_transactions(warehouse_id,item_id,batch_id,transaction_type,quantity,batch_unit_cost,average_unit_cost,reference_type,reference_id,idempotency_key,occurred_at,biz_type) values(%s,%s,%s,'opening',%s,%s,%s,'opening',%s,%s,now(),'期初')", (warehouse_id,item_id,batch_id,payload.quantity,payload.unit_cost,payload.unit_cost,payload.batch_no,f"opening:{payload.warehouse_code}:{payload.item_code}:{payload.batch_no}"))
     return {"batch_id": str(batch_id), "status": "created"}
 
 
@@ -1107,8 +1451,8 @@ def list_purchases() -> list[dict[str, Any]]:
 
 
 @app.post("/api/v2/purchases")
-def create_purchase(payload: PurchaseIn, x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN: raise HTTPException(status_code=401, detail="需要测试令牌")
+def create_purchase(payload: PurchaseIn, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.transaction():
             with conn.cursor() as cur:
@@ -1122,8 +1466,8 @@ def create_purchase(payload: PurchaseIn, x_v2_test_token: str | None = Header(de
 
 
 @app.post("/api/v2/purchases/{receipt_no}/approve")
-def approve_purchase(receipt_no: str, x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN: raise HTTPException(status_code=401, detail="需要测试令牌")
+def approve_purchase(receipt_no: str, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.transaction():
             with conn.cursor() as cur:
@@ -1138,7 +1482,7 @@ def approve_purchase(receipt_no: str, x_v2_test_token: str | None = Header(defau
                     cur.execute("insert into inventory_batches(warehouse_id,item_id,batch_no,received_at,received_qty,remaining_qty,unit_cost) values(%s,%s,%s,now(),%s,%s,%s) returning id",(warehouse_id,item_id,batch_no,qty,qty,landed)); batch_id=cur.fetchone()[0]
                     cur.execute("update purchase_receipt_lines set landed_unit_cost=%s where id=%s",(landed,line_id))
                     cur.execute("insert into inventory_balances(warehouse_id,item_id,sellable_qty,total_average_cost) values(%s,%s,%s,%s) on conflict(warehouse_id,item_id) do update set sellable_qty=inventory_balances.sellable_qty+excluded.sellable_qty,total_average_cost=inventory_balances.total_average_cost+excluded.total_average_cost,updated_at=now()",(warehouse_id,item_id,qty,Decimal(qty)*landed))
-                    cur.execute("insert into inventory_transactions(warehouse_id,item_id,batch_id,transaction_type,quantity,batch_unit_cost,average_unit_cost,reference_type,reference_id,idempotency_key,occurred_at) values(%s,%s,%s,'purchase',%s,%s,%s,'purchase',%s,%s,now())",(warehouse_id,item_id,batch_id,qty,landed,landed,receipt_no,f"purchase:{receipt_no}:{batch_no}"))
+                    cur.execute("insert into inventory_transactions(warehouse_id,item_id,batch_id,transaction_type,quantity,batch_unit_cost,average_unit_cost,reference_type,reference_id,idempotency_key,occurred_at,biz_type) values(%s,%s,%s,'purchase',%s,%s,%s,'purchase',%s,%s,now(),'采购入库')",(warehouse_id,item_id,batch_id,qty,landed,landed,receipt_no,f"purchase:{receipt_no}:{batch_no}"))
                 cur.execute("update purchase_receipts set status='approved',approved_at=now(),approved_by='test',received_at=now(),updated_at=now() where id=%s",(receipt_id,))
     return {"receipt_no": receipt_no, "status": "approved"}
 
@@ -1159,9 +1503,96 @@ def list_orders() -> list[dict[str, Any]]:
             return _row_dict(cur)
 
 
+@app.get("/api/v2/orders/{order_id}/cost")
+def get_order_cost(order_id: str) -> dict[str, Any]:
+    """订单成本快照查询（只读）：快照头 + 按单品展开的成本行。"""
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("select s.order_id,s.platform,s.store_name,w.code warehouse_code,b.code bundle_code,s.bom_version_id,s.product_cost,s.shipping_fee,s.total_cost,s.average_cost_as_of from order_cost_snapshots s join warehouses w on w.id=s.warehouse_id left join bundles b on b.id=s.bundle_id where s.order_id=%s", (order_id,))
+            rows = _row_dict(cur)
+            if not rows: raise HTTPException(status_code=404, detail="订单无成本快照")
+            cur.execute("select i.code item_code,i.name item_name,b.code bundle_code,l.bom_version_id,l.quantity,l.average_unit_cost,l.product_cost,l.shipping_fee from order_cost_snapshot_lines l join inventory_items i on i.id=l.item_id left join bundles b on b.id=l.bundle_id where l.order_id=%s order by i.code", (order_id,))
+            return {"snapshot": rows[0], "lines": _row_dict(cur)}
+
+
+@app.get("/api/v2/items/{item_code}/cost-versions")
+def list_item_cost_versions(item_code: str) -> list[dict[str, Any]]:
+    """单品成本版本历史（只读）。"""
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("select v.id,w.code warehouse_code,v.unit_cost,v.effective_from,v.effective_to,v.source_type,v.source_id,v.created_at from item_cost_versions v join inventory_items i on i.id=v.item_id join warehouses w on w.id=v.warehouse_id where i.code=%s order by v.effective_from desc,v.created_at desc", (item_code,))
+            return _row_dict(cur)
+
+
+@app.get("/api/v2/inventory/alerts")
+def inventory_alerts(stagnant_days: int = 30) -> dict[str, Any]:
+    """库存预警（只读）+ 开放异常计数。
+
+    低库存：可售库存 < 近7天日均出库量 × 3天（即撑不过3天）。
+    呆滞库存：可售天数 > stagnant_days（默认30天）或近7天完全无出库且仍有库存。
+    出库口径：仅统计网店管家实际出库导入（transaction_type='other_out'），
+    窗口为上海时区 [今天-7, 今天-1]（不含今天，避免当天数据未导全）。
+    """
+    stagnant_days = max(1, min(stagnant_days, 365))
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                with out7 as (
+                    select warehouse_id, item_id, sum(-quantity) as out_qty
+                    from inventory_transactions
+                    where transaction_type = 'other_out'
+                      and (occurred_at at time zone 'Asia/Shanghai')::date
+                          between (now() at time zone 'Asia/Shanghai')::date - 7
+                              and (now() at time zone 'Asia/Shanghai')::date - 1
+                    group by warehouse_id, item_id
+                )
+                select w.code warehouse_code, w.name warehouse_name, i.code item_code, i.name item_name,
+                       i.base_unit, ib.sellable_qty,
+                       round(o.out_qty / 7.0, 4) as avg_daily_out,
+                       round(o.out_qty / 7.0 * 3, 4) as threshold_qty,
+                       round(ib.sellable_qty / (o.out_qty / 7.0), 1) as days_of_stock,
+                       round(o.out_qty / 7.0 * 3 - ib.sellable_qty, 4) as gap_qty,
+                       ib.average_unit_cost, ib.total_average_cost
+                from inventory_balances ib
+                join warehouses w on w.id = ib.warehouse_id
+                join inventory_items i on i.id = ib.item_id
+                join out7 o on o.warehouse_id = ib.warehouse_id and o.item_id = ib.item_id
+                where i.is_active and ib.sellable_qty < o.out_qty / 7.0 * 3
+                order by ib.sellable_qty / (o.out_qty / 7.0) asc
+            """)
+            low_stock = _row_dict(cur)
+            cur.execute("""
+                with out7 as (
+                    select warehouse_id, item_id, sum(-quantity) as out_qty
+                    from inventory_transactions
+                    where transaction_type = 'other_out'
+                      and (occurred_at at time zone 'Asia/Shanghai')::date
+                          between (now() at time zone 'Asia/Shanghai')::date - 7
+                              and (now() at time zone 'Asia/Shanghai')::date - 1
+                    group by warehouse_id, item_id
+                )
+                select w.code warehouse_code, w.name warehouse_name, i.code item_code, i.name item_name,
+                       i.base_unit, ib.sellable_qty,
+                       round(coalesce(o.out_qty, 0) / 7.0, 4) as avg_daily_out,
+                       case when coalesce(o.out_qty, 0) > 0
+                            then round(ib.sellable_qty / (o.out_qty / 7.0), 1) end as days_of_stock,
+                       ib.average_unit_cost, ib.total_average_cost
+                from inventory_balances ib
+                join warehouses w on w.id = ib.warehouse_id
+                join inventory_items i on i.id = ib.item_id
+                left join out7 o on o.warehouse_id = ib.warehouse_id and o.item_id = ib.item_id
+                where i.is_active and ib.sellable_qty > 0
+                  and (o.out_qty is null or ib.sellable_qty / (o.out_qty / 7.0) > %s)
+                order by ib.total_average_cost desc
+            """, (stagnant_days,))
+            stagnant = _row_dict(cur)
+            cur.execute("select count(*) from inventory_exceptions where status='open'")
+            return {"low_stock": low_stock, "stagnant": stagnant, "stagnant_days": stagnant_days, "open_exceptions": cur.fetchone()[0]}
+
+
 @app.post("/api/v2/orders")
-def import_order(payload: OrderIn, x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN: raise HTTPException(status_code=401, detail="需要测试令牌")
+def import_order(payload: OrderIn, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.transaction():
             with conn.cursor() as cur:
@@ -1190,7 +1621,7 @@ def import_order(payload: OrderIn, x_v2_test_token: str | None = Header(default=
                     cur.execute("select id,batch_no,remaining_qty,unit_cost from inventory_batches where warehouse_id=%s and item_id=%s and stock_status='sellable' and remaining_qty>0 order by received_at,id for update",(warehouse_id,item_id)); batches=cur.fetchall(); remaining=needed
                     for batch_id,batch_no,batch_qty,batch_cost in batches:
                         take=min(Decimal(batch_qty),remaining); remaining-=take
-                        cur.execute("update inventory_batches set remaining_qty=remaining_qty-%s where id=%s",(take,batch_id)); cur.execute("insert into order_batch_allocations(order_id,item_id,batch_id,quantity,batch_unit_cost) values(%s,%s,%s,%s,%s)",(payload.order_id,item_id,batch_id,take,batch_cost)); cur.execute("insert into inventory_transactions(warehouse_id,item_id,batch_id,transaction_type,quantity,batch_unit_cost,average_unit_cost,reference_type,reference_id,idempotency_key,occurred_at) values(%s,%s,%s,'sale',%s,%s,%s,'order',%s,%s,%s)",(warehouse_id,item_id,batch_id,-take,batch_cost,batch_cost,payload.order_id,f"sale:{payload.order_id}:{item_id}:{batch_id}",payload.payment_time));
+                        cur.execute("update inventory_batches set remaining_qty=remaining_qty-%s where id=%s",(take,batch_id)); cur.execute("insert into order_batch_allocations(order_id,item_id,batch_id,quantity,batch_unit_cost) values(%s,%s,%s,%s,%s)",(payload.order_id,item_id,batch_id,take,batch_cost)); cur.execute("insert into inventory_transactions(warehouse_id,item_id,batch_id,transaction_type,quantity,batch_unit_cost,average_unit_cost,reference_type,reference_id,idempotency_key,occurred_at,biz_type) values(%s,%s,%s,'sale',%s,%s,%s,'order',%s,%s,%s,'销售出库')",(warehouse_id,item_id,batch_id,-take,batch_cost,batch_cost,payload.order_id,f"sale:{payload.order_id}:{item_id}:{batch_id}",payload.payment_time));
                         if remaining<=0: break
                     cur.execute("update inventory_balances set sellable_qty=sellable_qty-%s,total_average_cost=greatest(0,total_average_cost-%s),updated_at=now() where warehouse_id=%s and item_id=%s",(needed,needed*average,warehouse_id,item_id))
                 cur.execute("update platform_orders set inventory_status='deducted' where id=%s",(internal_id,)); cur.execute("insert into order_cost_snapshots(order_id,platform,store_name,warehouse_id,product_cost,shipping_fee,total_cost,average_cost_as_of) values(%s,%s,%s,%s,%s,%s,%s,%s)",(payload.order_id,payload.platform,payload.store_name,warehouse_id,product_cost,shipping,product_cost+shipping,payload.payment_time))
@@ -1201,10 +1632,9 @@ def import_order(payload: OrderIn, x_v2_test_token: str | None = Header(default=
 
 
 @app.post("/api/v2/orders/{order_id}/cancel")
-def cancel_order(order_id: str, x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
+def cancel_order(order_id: str, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
     """未发货取消冲销原批次；已发货订单不允许走自动冲销。"""
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN:
-        raise HTTPException(status_code=401, detail="需要测试令牌")
+    _require_user_token(x_v2_test_token, authorization)
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.transaction():
             with conn.cursor() as cur:
@@ -1226,7 +1656,7 @@ def cancel_order(order_id: str, x_v2_test_token: str | None = Header(default=Non
                         bal = cur.fetchone()
                         average = Decimal(bal[0]) if bal else Decimal(batch_cost)
                         cur.execute("insert into inventory_balances(warehouse_id,item_id,sellable_qty,total_average_cost) values(%s,%s,%s,%s) on conflict(warehouse_id,item_id) do update set sellable_qty=inventory_balances.sellable_qty+excluded.sellable_qty,total_average_cost=inventory_balances.total_average_cost+excluded.total_average_cost,updated_at=now()", (warehouse_id, item_id, qty, Decimal(qty) * average))
-                        cur.execute("insert into inventory_transactions(warehouse_id,item_id,batch_id,transaction_type,quantity,batch_unit_cost,average_unit_cost,reference_type,reference_id,idempotency_key,occurred_at) values(%s,%s,%s,'sale_reversal',%s,%s,%s,'order_cancel',%s,%s,now())", (warehouse_id, item_id, batch_id, qty, batch_cost, average, order_id, f"sale_reversal:{order_id}:{item_id}:{batch_id}"))
+                        cur.execute("insert into inventory_transactions(warehouse_id,item_id,batch_id,transaction_type,quantity,batch_unit_cost,average_unit_cost,reference_type,reference_id,idempotency_key,occurred_at,biz_type) values(%s,%s,%s,'sale_reversal',%s,%s,%s,'order_cancel',%s,%s,now(),'销售冲销')", (warehouse_id, item_id, batch_id, qty, batch_cost, average, order_id, f"sale_reversal:{order_id}:{item_id}:{batch_id}"))
                 cur.execute("update platform_orders set is_cancelled=true,order_status='已取消',inventory_status=case when %s='deducted' then 'reversed' else inventory_status end,updated_at=now() where id=%s", (inventory_status, internal_id))
                 cur.execute("update inventory_exceptions set status='cancelled',resolved_at=now(),resolved_by='test' where order_id=%s and status='open'", (order_id,))
     return {"order_id": order_id, "status": "cancelled", "inventory_status": "reversed" if inventory_status == "deducted" else inventory_status}
@@ -1241,8 +1671,8 @@ def list_returns() -> list[dict[str, Any]]:
 
 
 @app.post("/api/v2/returns")
-def create_return(payload: ReturnIn, x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN: raise HTTPException(status_code=401, detail="需要测试令牌")
+def create_return(payload: ReturnIn, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.transaction():
             with conn.cursor() as cur:
@@ -1255,8 +1685,8 @@ def create_return(payload: ReturnIn, x_v2_test_token: str | None = Header(defaul
 
 
 @app.post("/api/v2/returns/{return_no}/inspect")
-def inspect_return(return_no: str, payload: ReturnInspectIn, x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN: raise HTTPException(status_code=401, detail="需要测试令牌")
+def inspect_return(return_no: str, payload: ReturnInspectIn, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
     if payload.target_status not in {"sellable","defective","scrapped"}: raise HTTPException(status_code=400,detail="审核状态无效")
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.transaction():
@@ -1265,12 +1695,20 @@ def inspect_return(return_no: str, payload: ReturnInspectIn, x_v2_test_token: st
                 if not row: raise HTTPException(status_code=404,detail="退货单不存在")
                 rid,warehouse_id,item_id,qty,batch_id=row; cur.execute("update return_receipts set status='completed',inspected_at=now(),inspected_by='test',updated_at=now() where id=%s",(rid,)); cur.execute("update return_receipt_lines set target_status=%s where return_receipt_id=%s",(payload.target_status,rid)); cur.execute("update inventory_batches set stock_status=%s where id=%s",(payload.target_status,batch_id))
                 if payload.target_status=='sellable':
-                    cur.execute("select unit_cost from inventory_batches where id=%s",(batch_id,)); cost=Decimal(cur.fetchone()[0]); cur.execute("insert into inventory_balances(warehouse_id,item_id,sellable_qty,total_average_cost) values(%s,%s,%s,%s) on conflict(warehouse_id,item_id) do update set sellable_qty=inventory_balances.sellable_qty+excluded.sellable_qty,total_average_cost=inventory_balances.total_average_cost+excluded.total_average_cost,updated_at=now()",(warehouse_id,item_id,qty,qty*cost)); cur.execute("insert into inventory_transactions(warehouse_id,item_id,batch_id,transaction_type,quantity,batch_unit_cost,average_unit_cost,reference_type,reference_id,idempotency_key,occurred_at) values(%s,%s,%s,'customer_return',%s,%s,%s,'return',%s,%s,now())",(warehouse_id,item_id,batch_id,qty,cost,cost,return_no,f"return:{return_no}:sellable"))
+                    cur.execute("select unit_cost from inventory_batches where id=%s",(batch_id,)); cost=Decimal(cur.fetchone()[0]); cur.execute("insert into inventory_balances(warehouse_id,item_id,sellable_qty,total_average_cost) values(%s,%s,%s,%s) on conflict(warehouse_id,item_id) do update set sellable_qty=inventory_balances.sellable_qty+excluded.sellable_qty,total_average_cost=inventory_balances.total_average_cost+excluded.total_average_cost,updated_at=now()",(warehouse_id,item_id,qty,qty*cost)); cur.execute("insert into inventory_transactions(warehouse_id,item_id,batch_id,transaction_type,quantity,batch_unit_cost,average_unit_cost,reference_type,reference_id,idempotency_key,occurred_at,biz_type) values(%s,%s,%s,'customer_return',%s,%s,%s,'return',%s,%s,now(),'退货入库')",(warehouse_id,item_id,batch_id,qty,cost,cost,return_no,f"return:{return_no}:sellable"))
     return {"return_no":return_no,"status":"completed","target_status":payload.target_status}
 
 
 @app.post("/api/v2/demo/run")
-def run_demo_endpoint(x_v2_test_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if TEST_TOKEN and x_v2_test_token != TEST_TOKEN:
-        raise HTTPException(status_code=401, detail="需要测试令牌")
+def run_demo_endpoint(x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
     return run_workflow()
+
+import v2.costs
+app.include_router(v2.costs.router)
+
+import v2.stock_io
+app.include_router(v2.stock_io.router)
+
+from v2 import v1_compat
+app.include_router(v1_compat.router)

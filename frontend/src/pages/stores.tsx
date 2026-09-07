@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react"
 import { Plus, Trash2, Edit2, Check, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
+import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { PageHeader, FilterBar, FilterItem, EmptyState } from "@/components/page-kit"
 import { getStores, createStore, renameStore, updateStorePlatform, deleteStore, type Store } from "@/api/client"
 
 export function StoresPage() {
@@ -74,40 +78,38 @@ export function StoresPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-2xl font-bold">店铺管理</h2>
-      {error && <div className="text-sm text-destructive">{error}</div>}
-      <Card>
-        <CardHeader>
-          <CardTitle>新增店铺</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex gap-2">
-            <Input
-              placeholder="店铺名称"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleCreate()}
-            />
-            <select
-              className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-              value={newPlatform}
-              onChange={(e) => setNewPlatform(e.target.value)}
-            >
-              <option value="pdd">拼多多</option>
-              <option value="douyin">抖音</option>
-              <option value="tmall">天猫</option>
-              <option value="wechat">微信小店</option>
-            </select>
-            <Button onClick={handleCreate} disabled={loading}>
-              <Plus className="h-4 w-4 mr-1" /> 新增
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+    <div>
+      <PageHeader title="店铺管理" description="维护店铺列表与所属平台" />
+      {error && (
+        <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-[13px] text-destructive">
+          {error}
+        </div>
+      )}
+
+      <FilterBar>
+        <FilterItem label="店铺名称">
+          <Input
+            placeholder="店铺名称"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+          />
+        </FilterItem>
+        <FilterItem label="平台">
+          <Select value={newPlatform} onChange={(e) => setNewPlatform(e.target.value)}>
+            <option value="pdd">拼多多</option>
+            <option value="douyin">抖音</option>
+            <option value="tmall">天猫</option>
+            <option value="wechat">微信小店</option>
+          </Select>
+        </FilterItem>
+        <Button size="sm" onClick={handleCreate} disabled={loading}>
+          <Plus className="h-4 w-4 mr-1" /> 新增
+        </Button>
+      </FilterBar>
 
       <Card>
-        <CardContent className="pt-6">
+        <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
@@ -136,8 +138,8 @@ export function StoresPage() {
                   </TableCell>
                   <TableCell>
                     {editingId === store.id ? (
-                      <select
-                        className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                      <Select
+                        className="h-8 w-auto"
                         value={editPlatform}
                         onChange={(e) => {
                           setEditPlatform(e.target.value)
@@ -148,11 +150,11 @@ export function StoresPage() {
                         <option value="douyin">抖音</option>
                         <option value="tmall">天猫</option>
                         <option value="wechat">微信小店</option>
-                      </select>
+                      </Select>
                     ) : (
-                      <span className="rounded bg-muted px-2 py-1 text-xs text-muted-foreground">
+                      <Badge variant="secondary">
                         {store.platform === "douyin" ? "抖音" : store.platform === "tmall" ? "天猫" : store.platform === "wechat" ? "微信小店" : "拼多多"}
-                      </span>
+                      </Badge>
                     )}
                   </TableCell>
                   <TableCell>{new Date(store.created_at).toLocaleString()}</TableCell>
@@ -187,10 +189,20 @@ export function StoresPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              {stores.length === 0 && (
+              {loading && stores.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                    暂无店铺
+                  <TableCell colSpan={5} className="p-4">
+                    <div className="space-y-2">
+                      <Skeleton className="h-8 w-full" />
+                      <Skeleton className="h-8 w-full" />
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )}
+              {!loading && stores.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5}>
+                    <EmptyState title="暂无店铺" hint="使用上方表单新增店铺" />
                   </TableCell>
                 </TableRow>
               )}

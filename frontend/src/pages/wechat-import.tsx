@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Upload, Search, Trash2 } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Loader2, Upload, Search, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { FileDropzone } from "@/components/ui/file-dropzone"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { EmptyState, PageHeader } from "@/components/page-kit"
 import { getStores, importWechat, getWechatRecords, deleteWechatRecord, type Store } from "@/api/client"
 
 export function WechatImportPage() {
@@ -74,14 +75,15 @@ export function WechatImportPage() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-2xl font-bold">微信导入</h2>
+      <PageHeader title="微信导入" />
 
       {message && (
         <div
-          className={`text-sm p-3 rounded-md ${
-            message.includes("成功") ? "bg-green-100 text-green-800" : "bg-destructive/10 text-destructive"
+          className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm ${
+            message.includes("成功") ? "border-success/30 bg-success/10 text-success" : "border-destructive/30 bg-destructive/10 text-destructive"
           }`}
         >
+          {message.includes("成功") ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertTriangle className="h-4 w-4 shrink-0" />}
           {message}
         </div>
       )}
@@ -118,7 +120,7 @@ export function WechatImportPage() {
           />
 
           <Button onClick={handleImport} disabled={loading}>
-            <Upload className="h-4 w-4 mr-1" /> {loading ? "导入中..." : "开始导入"}
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} {loading ? "导入中..." : "开始导入"}
           </Button>
         </CardContent>
       </Card>
@@ -159,8 +161,8 @@ export function WechatImportPage() {
               ))}
               {records.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground">
-                    暂无导入记录
+                  <TableCell colSpan={6} className="p-0">
+                    <EmptyState title="暂无导入记录" />
                   </TableCell>
                 </TableRow>
               )}

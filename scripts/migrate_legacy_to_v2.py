@@ -274,6 +274,149 @@ def resolve_merchant_code(
     return None
 
 
+def _json_cell(value: Any) -> Any:
+    """把 DataFrame 单元格转成 JSON 安全值（NaN -> None，numpy 标量 -> Python 标量）。"""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if hasattr(value, "item"):
+        try:
+            value = value.item()
+        except Exception:
+            pass
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    rendered = text(value)
+    return rendered if rendered else None
+
+
+def _full_row_payload(line: pd.Series) -> Dict[str, Any]:
+    """整行进 raw_payload（上传导入路径用），保留原始中文列以便 V1 订单页透传展示。"""
+    payload: Dict[str, Any] = {}
+    for key, value in line.items():
+        payload[str(key)] = _json_cell(value)
+    return payload
+
+
+def insert_orders_frame(
+    cur: psycopg.Cursor,
+    *,
+    batch_id: UUID,
+    platform: str,
+    store_name: str,
+    frame: pd.DataFrame,
+    style_map: Dict[str, str],
+    bundles: Dict[str, UUID],
+    bundle_versions: Dict[str, UUID],
+    warehouse_id: UUID,
+    reassign_batch: bool = False,
+    full_payload: bool = False,
+    payment_times: Optional[Dict[str, Optional[datetime]]] = None,
+) -> int:
+    """把订单 DataFrame 按 order_id 分组写入 platform_orders / platform_order_lines。
+
+    迁移与 V1 兼容上传共用本函数：
+    - reassign_batch=True 时，冲突订单的 import_batch_id 也更新为本次批次，
+      使“回滚 = 删除该 import_batch_id 的行”能覆盖被覆盖导入的订单（V1 兼容上传用语义）；
+    - full_payload=True 时 raw_payload 保留整行原始列（上传路径），否则只保留裁剪子集（迁移路径）；
+    - payment_times 可覆盖每单的支付时间（上传路径按 V1 口径 order_time 优先解析）。
+    """
+    rows_inserted = 0
+    # Group by order to avoid duplicate inserts (same order may appear in multiple rows)
+    for order_id, group in frame.groupby("order_id", sort=False):
+        order_id = text(order_id)
+        if not order_id:
+            continue
+        first = group.iloc[0]
+        if payment_times is not None:
+            payment_time = payment_times.get(order_id)
+        else:
+            payment_time = parse_datetime(first.get("pay_time"))
+        order_status = text(first.get("order_status"))
+
+        conflict_set = """
+                payment_time = excluded.payment_time,
+                order_status = excluded.order_status,
+                warehouse_id = excluded.warehouse_id,
+                updated_at = now()
+        """
+        if reassign_batch:
+            conflict_set += ",\n                import_batch_id = excluded.import_batch_id"
+
+        cur.execute(
+            f"""
+            insert into platform_orders (import_batch_id, platform, store_name, order_id, payment_time, order_status, warehouse_id, inventory_status)
+            values (%s, %s, %s, %s, %s, %s, %s, %s)
+            on conflict (platform, store_name, order_id) do update set
+                {conflict_set}
+            returning id
+            """,
+            (batch_id, platform, store_name, order_id, payment_time, order_status, warehouse_id, "legacy"),
+        )
+        order_uuid = cur.fetchone()[0]
+
+        # 覆盖导入时清掉旧行再按新文件重写，避免旧规格行残留（V1 是按 order_id 整体覆盖）
+        if reassign_batch:
+            cur.execute("delete from platform_order_lines where order_id = %s", (order_uuid,))
+
+        for _, line in group.iterrows():
+            merchant_code = resolve_merchant_code(line, style_map)
+            bundle_id = bundles.get(merchant_code) if merchant_code else None
+            bom_version_id = bundle_versions.get(merchant_code) if merchant_code else None
+            product_id = text(line.get("product_id"))
+            style_id = text(line.get("style_id"))
+            quantity_val = qty(line.get("quantity"))
+            if quantity_val <= 0:
+                quantity_val = Decimal("1")
+
+            if full_payload:
+                raw_payload = _full_row_payload(line)
+                # 规范化 key 覆盖，保证读取端两种 key 形态都可用
+                raw_payload.update({
+                    "product_name": text(line.get("product_name")),
+                    "style_name": text(line.get("style_name")),
+                    "item_total": float(money(line.get("item_total"))),
+                    "user_paid": float(money(line.get("user_paid"))),
+                    "merchant_income": float(money(line.get("merchant_income"))),
+                    "aftersales_status": text(line.get("aftersales_status")),
+                    "merchant_code": merchant_code,
+                })
+            else:
+                raw_payload = {
+                    "product_name": text(line.get("product_name")),
+                    "style_name": text(line.get("style_name")),
+                    "item_total": float(money(line.get("item_total"))),
+                    "user_paid": float(money(line.get("user_paid"))),
+                    "merchant_income": float(money(line.get("merchant_income"))),
+                    "aftersales_status": text(line.get("aftersales_status")),
+                    "source_type": text(line.get("_source_type")),
+                    "merchant_code": merchant_code,
+                }
+
+            cur.execute(
+                """
+                insert into platform_order_lines (order_id, product_id, style_id, bundle_id, bom_version_id, quantity, expected_shipping_fee, raw_payload)
+                values (%s, %s, %s, %s, %s, %s, %s, %s)
+                on conflict (order_id, product_id, style_id) do update set
+                    bundle_id = excluded.bundle_id,
+                    bom_version_id = excluded.bom_version_id,
+                    quantity = excluded.quantity,
+                    expected_shipping_fee = excluded.expected_shipping_fee,
+                    raw_payload = excluded.raw_payload
+                """,
+                (order_uuid, product_id, style_id, bundle_id, bom_version_id, quantity_val, Decimal("0"), Json(raw_payload)),
+            )
+            rows_inserted += 1
+
+    return rows_inserted
+
+
 def migrate_orders_for_file(
     cur: psycopg.Cursor,
     state: MigrationState,
@@ -310,69 +453,17 @@ def migrate_orders_for_file(
     )
     batch_id = cur.fetchone()[0]
 
-    # Pre-compute warehouse id
-    warehouse_id = state.warehouses[DEFAULT_WAREHOUSE]
-
-    rows_inserted = 0
-    # Group by order to avoid duplicate inserts (same order may appear in multiple rows)
-    for order_id, group in frame.groupby("order_id", sort=False):
-        order_id = text(order_id)
-        if not order_id:
-            continue
-        first = group.iloc[0]
-        payment_time = parse_datetime(first.get("pay_time"))
-        order_status = text(first.get("order_status"))
-
-        cur.execute(
-            """
-            insert into platform_orders (import_batch_id, platform, store_name, order_id, payment_time, order_status, warehouse_id, inventory_status)
-            values (%s, %s, %s, %s, %s, %s, %s, %s)
-            on conflict (platform, store_name, order_id) do update set
-                payment_time = excluded.payment_time,
-                order_status = excluded.order_status,
-                warehouse_id = excluded.warehouse_id,
-                updated_at = now()
-            returning id
-            """,
-            (batch_id, platform, store_name, order_id, payment_time, order_status, warehouse_id, "legacy"),
-        )
-        order_uuid = cur.fetchone()[0]
-
-        for _, line in group.iterrows():
-            merchant_code = resolve_merchant_code(line, style_map)
-            bundle_id = state.bundles.get(merchant_code) if merchant_code else None
-            bom_version_id = state.bundle_versions.get(merchant_code) if merchant_code else None
-            product_id = text(line.get("product_id"))
-            style_id = text(line.get("style_id"))
-            quantity_val = qty(line.get("quantity"))
-            if quantity_val <= 0:
-                quantity_val = Decimal("1")
-
-            raw_payload = {
-                "product_name": text(line.get("product_name")),
-                "style_name": text(line.get("style_name")),
-                "item_total": float(money(line.get("item_total"))),
-                "user_paid": float(money(line.get("user_paid"))),
-                "merchant_income": float(money(line.get("merchant_income"))),
-                "aftersales_status": text(line.get("aftersales_status")),
-                "source_type": text(line.get("_source_type")),
-                "merchant_code": merchant_code,
-            }
-
-            cur.execute(
-                """
-                insert into platform_order_lines (order_id, product_id, style_id, bundle_id, bom_version_id, quantity, expected_shipping_fee, raw_payload)
-                values (%s, %s, %s, %s, %s, %s, %s, %s)
-                on conflict (order_id, product_id, style_id) do update set
-                    bundle_id = excluded.bundle_id,
-                    bom_version_id = excluded.bom_version_id,
-                    quantity = excluded.quantity,
-                    expected_shipping_fee = excluded.expected_shipping_fee,
-                    raw_payload = excluded.raw_payload
-                """,
-                (order_uuid, product_id, style_id, bundle_id, bom_version_id, quantity_val, Decimal("0"), Json(raw_payload)),
-            )
-            rows_inserted += 1
+    rows_inserted = insert_orders_frame(
+        cur,
+        batch_id=batch_id,
+        platform=platform,
+        store_name=store_name,
+        frame=frame,
+        style_map=style_map,
+        bundles=state.bundles,
+        bundle_versions=state.bundle_versions,
+        warehouse_id=state.warehouses[DEFAULT_WAREHOUSE],
+    )
 
     return len(frame), rows_inserted
 
@@ -419,6 +510,27 @@ def migrate_promos_for_file(
     )
     batch_id = cur.fetchone()[0]
 
+    rows_inserted = insert_promo_frame(
+        cur,
+        batch_id=batch_id,
+        platform=platform,
+        store_name=store_name,
+        metric_date=metric_date,
+        frame=frame,
+    )
+    return len(frame), rows_inserted
+
+
+def insert_promo_frame(
+    cur: psycopg.Cursor,
+    *,
+    batch_id: UUID,
+    platform: str,
+    store_name: str,
+    metric_date: Optional[date],
+    frame: pd.DataFrame,
+) -> int:
+    """把推广 DataFrame 写入 promotion_metrics_daily（迁移与 V1 兼容上传共用）。"""
     rows_inserted = 0
     for _, row in frame.iterrows():
         product_id = text(row.get("product_id"))
@@ -455,7 +567,7 @@ def migrate_promos_for_file(
         )
         rows_inserted += 1
 
-    return len(frame), rows_inserted
+    return rows_inserted
 
 
 def run_migration() -> Dict[str, Any]:

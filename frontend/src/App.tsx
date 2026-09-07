@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useEffect, useState } from "react"
 import { BrowserRouter, Routes, Route, NavLink, useLocation, useNavigate } from "react-router-dom"
 import {
   LayoutDashboard,
@@ -14,7 +14,6 @@ import {
   Users,
   Settings,
   RefreshCw,
-  User,
   ChevronUp,
   Sun,
   Moon,
@@ -22,9 +21,19 @@ import {
   CheckCircle2,
   BookOpenCheck,
   ClipboardList,
+  Package,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Select } from "@/components/ui/select"
+import { Skeleton } from "@/components/ui/skeleton"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { cn } from "@/lib/utils"
 import { useTheme } from "@/components/theme-context"
 import { AuthGuard } from "@/components/auth-guard"
 import { canAccessPage, getCurrentUser, isMaster, logout } from "@/api/auth"
@@ -183,25 +192,35 @@ function PlatformTabs({
   onChange: (p: Platform) => void
 }) {
   return (
-    <div className="px-2 pb-3">
-      <Select
-        value={platform}
-        onChange={(e) => onChange(e.target.value as Platform)}
-      >
-        {platformTabs.map((tab) => (
-          <option key={tab.key} value={tab.key}>
-            {tab.label}
-          </option>
-        ))}
-      </Select>
+    <div className="mb-3 grid grid-cols-4 gap-1 rounded-lg bg-muted p-1">
+      {platformTabs.map((tab) => (
+        <button
+          key={tab.key}
+          onClick={() => onChange(tab.key)}
+          className={cn(
+            "rounded-md px-1 py-1.5 text-xs font-medium transition-colors",
+            platform === tab.key
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          {tab.label}
+        </button>
+      ))}
     </div>
   )
 }
 
 function PageLoading() {
   return (
-    <div className="flex min-h-[240px] items-center justify-center text-sm text-muted-foreground">
-      页面加载中…
+    <div className="space-y-4 p-2">
+      <Skeleton className="h-8 w-48" />
+      <div className="grid gap-4 md:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-24" />
+        ))}
+      </div>
+      <Skeleton className="h-64" />
     </div>
   )
 }
@@ -209,133 +228,72 @@ function PageLoading() {
 function UserMenu({
   user,
   showMaster,
-  onClose,
   updating,
   updateMsg,
   onUpdate,
 }: {
   user: ReturnType<typeof getCurrentUser>
   showMaster: boolean
-  onClose?: () => void
   updating: boolean
   updateMsg: string
   onUpdate: () => void
 }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
   const { theme, setTheme } = useTheme()
-
-  useEffect(() => {
-    if (!open) return
-    const handle = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
-    }
-    document.addEventListener("mousedown", handle)
-    return () => document.removeEventListener("mousedown", handle)
-  }, [open])
-
-  const itemClass =
-    "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+  const navigate = useNavigate()
 
   return (
-    <div className="px-2">
-      <div className="flex items-center justify-between">
-        <div className="text-sm">
-          <div className="font-medium">{user?.username || "未知用户"}</div>
-          <div className="text-xs text-muted-foreground">
-            {user?.role === "master" ? "主账号" : "子账号"}
-          </div>
-        </div>
-        <div className="relative" ref={ref}>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="gap-1 text-muted-foreground"
-            onClick={() => setOpen(!open)}
-          >
-            <User className="h-4 w-4" />
-            <ChevronUp className={`h-3 w-3 transition-transform ${open ? "rotate-180" : ""}`} />
-          </Button>
-          {open && (
-            <div className="absolute bottom-full right-0 mb-2 w-44 rounded-md border bg-popover p-1 shadow-lg z-50">
-              {(showMaster || canAccessPage("users")) && (
-                <NavLink
-                  to="/users"
-                  onClick={() => {
-                    setOpen(false)
-                    onClose?.()
-                  }}
-                  className={itemClass}
-                >
-                  <Users className="h-4 w-4" />
-                  用户管理
-                </NavLink>
-              )}
-              {(showMaster || canAccessPage("stores")) && (
-                <NavLink
-                  to="/stores"
-                  onClick={() => {
-                    setOpen(false)
-                    onClose?.()
-                  }}
-                  className={itemClass}
-                >
-                  <Store className="h-4 w-4" />
-                  店铺
-                </NavLink>
-              )}
-              {showMaster && (
-                <button
-                  onClick={() => {
-                    setOpen(false)
-                    onUpdate()
-                  }}
-                  disabled={updating}
-                  className={`${itemClass} ${updating ? "opacity-60" : ""}`}
-                >
-                  <RefreshCw className={`h-4 w-4 ${updating ? "animate-spin" : ""}`} />
-                  {updating ? "更新中" : "系统更新"}
-                </button>
-              )}
-              <NavLink
-                to="/change-password"
-                onClick={() => {
-                  setOpen(false)
-                  onClose?.()
-                }}
-                className={itemClass}
-              >
-                <Settings className="h-4 w-4" />
-                修改密码
-              </NavLink>
-              <button
-                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-                className={itemClass}
-              >
-                {theme === "dark" ? (
-                  <Sun className="h-4 w-4" />
-                ) : (
-                  <Moon className="h-4 w-4" />
-                )}
-                切换主题
-              </button>
-              <button
-                onClick={() => {
-                  setOpen(false)
-                  logout()
-                }}
-                className={itemClass}
-              >
-                <LogOut className="h-4 w-4" />
-                退出登录
-              </button>
-            </div>
+    <div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-muted">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+              {(user?.username || "?").slice(0, 1).toUpperCase()}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium">{user?.username || "未知用户"}</span>
+              <span className="block text-xs text-muted-foreground">
+                {user?.role === "master" ? "主账号" : "子账号"}
+              </span>
+            </span>
+            <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="top" align="start" className="w-48">
+          {(showMaster || canAccessPage("users")) && (
+            <DropdownMenuItem onSelect={() => navigate("/users")}>
+              <Users />
+              用户管理
+            </DropdownMenuItem>
           )}
-        </div>
-      </div>
-      {updateMsg && <div className="pt-2 text-xs text-destructive">{updateMsg}</div>}
+          {(showMaster || canAccessPage("stores")) && (
+            <DropdownMenuItem onSelect={() => navigate("/stores")}>
+              <Store />
+              店铺
+            </DropdownMenuItem>
+          )}
+          {showMaster && (
+            <DropdownMenuItem disabled={updating} onSelect={() => onUpdate()}>
+              <RefreshCw className={updating ? "animate-spin" : ""} />
+              {updating ? "更新中" : "系统更新"}
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => navigate("/change-password")}>
+            <Settings />
+            修改密码
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setTheme(theme === "dark" ? "light" : "dark")}>
+            {theme === "dark" ? <Sun /> : <Moon />}
+            切换主题
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => logout()}>
+            <LogOut />
+            退出登录
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {updateMsg && <div className="px-2 pt-2 text-xs text-destructive">{updateMsg}</div>}
     </div>
   )
 }
@@ -436,11 +394,16 @@ function Sidebar({
   }
 
   return (
-    <aside className="w-64 border-r bg-card min-h-screen p-4 flex flex-col">
-      <div className="mb-4 px-2 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight">推广数据看板</h1>
-          <p className="text-xs text-muted-foreground mt-1">多平台 BI</p>
+    <aside className="w-60 shrink-0 border-r bg-card min-h-screen p-3 flex flex-col">
+      <div className="mb-4 flex items-center justify-between px-1 pt-1">
+        <div className="flex items-center gap-2.5">
+          <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-primary-foreground">
+            <BarChart3 className="h-4 w-4" />
+          </span>
+          <div>
+            <h1 className="text-[15px] font-semibold tracking-tight">推广数据看板</h1>
+            <p className="text-[11px] text-muted-foreground">多平台 BI</p>
+          </div>
         </div>
         {onClose && (
           <Button variant="ghost" size="icon" onClick={onClose} className="md:hidden">
@@ -451,7 +414,7 @@ function Sidebar({
 
       <PlatformTabs platform={platform} onChange={onPlatformChange} />
 
-      <nav className="space-y-1">
+      <nav className="space-y-0.5">
         {visibleItems.map((item) => (
           <NavLink
             key={item.to}
@@ -463,11 +426,12 @@ function Sidebar({
             end
             onClick={onClose}
             className={({ isActive }) =>
-              `flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+              cn(
+                "relative flex items-center gap-2.5 rounded-md px-3 py-2 text-[13px] font-medium transition-colors",
                 isActive
-                  ? "bg-primary text-primary-foreground"
+                  ? "bg-accent text-accent-foreground shadow-[inset_2.5px_0_0_hsl(var(--primary))]"
                   : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              }`
+              )
             }
           >
             <item.icon className="h-4 w-4" />
@@ -480,7 +444,7 @@ function Sidebar({
                   </span>
                 )}
                 {costBadge.unmapped > 0 && (
-                  <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-green-500 px-1.5 text-[10px] font-bold text-white">
+                  <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-success px-1.5 text-[10px] font-bold text-success-foreground">
                     {costBadge.unmapped > 99 ? "99+" : costBadge.unmapped}
                   </span>
                 )}
@@ -489,39 +453,50 @@ function Sidebar({
           </NavLink>
         ))}
       </nav>
-      <div className="mt-auto pt-4 border-t">
+      {(showMaster || canAccessPage("v2_supply")) && (
+        <div className="mt-3 border-t pt-3">
+          <NavLink
+            to="/v2"
+            onClick={onClose}
+            className="relative flex items-center gap-2.5 rounded-md px-3 py-2 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <Package className="h-4 w-4" />
+            <span className="flex-1">供应链中心</span>
+          </NavLink>
+        </div>
+      )}
+      <div className="mt-auto pt-3 border-t">
         <UserMenu
           user={user}
           showMaster={showMaster}
-          onClose={onClose}
           updating={updating}
           updateMsg={updateMsg}
           onUpdate={handleUpdate}
         />
       </div>
 
-      {updateProgress.length > 0 && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg">
-            <h3 className="mb-4 text-lg font-semibold">系统更新</h3>
-            <div className="max-h-80 space-y-2 overflow-auto">
-              {updateProgress.map((step, idx) => (
-                <div key={idx} className="flex items-start gap-2 text-sm">
-                  {step.returncode === 0 ? (
-                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-500" />
-                  ) : (
-                    <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-                  )}
-                  <span className="break-all">{step.cmd}</span>
-                </div>
-              ))}
-            </div>
-            {updateMsg && (
-              <div className="mt-4 text-sm text-muted-foreground">{updateMsg}</div>
-            )}
+      <Dialog open={updateProgress.length > 0} onOpenChange={() => {}}>
+        <DialogContent className="max-w-md" onPointerDownOutside={(e) => e.preventDefault()}>
+          <DialogHeader>
+            <DialogTitle>系统更新</DialogTitle>
+          </DialogHeader>
+          <div className="max-h-80 space-y-2 overflow-auto">
+            {updateProgress.map((step, idx) => (
+              <div key={idx} className="flex items-start gap-2 text-sm">
+                {step.returncode === 0 ? (
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+                ) : (
+                  <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                )}
+                <span className="break-all">{step.cmd}</span>
+              </div>
+            ))}
           </div>
-        </div>
-      )}
+          {updateMsg && (
+            <div className="mt-4 text-sm text-muted-foreground">{updateMsg}</div>
+          )}
+        </DialogContent>
+      </Dialog>
     </aside>
   )
 }
@@ -560,7 +535,7 @@ function Layout() {
       </div>
       {sidebarOpen && (
         <div className="fixed inset-0 z-50 flex md:hidden">
-          <div className="w-64">
+          <div className="w-60">
             <Sidebar
               platform={platform}
               onPlatformChange={handlePlatformChange}
@@ -577,9 +552,10 @@ function Layout() {
             <Menu className="h-5 w-5" />
           </Button>
         </header>
-        <div className="flex-1 p-4 md:p-6 overflow-auto">
-          <Suspense fallback={<PageLoading />}>
-            <Routes>
+        <div className="flex-1 overflow-auto">
+          <div key={location.pathname} className="page-enter mx-auto w-full max-w-[1400px] p-4 md:p-6">
+            <Suspense fallback={<PageLoading />}>
+              <Routes>
             <Route path="/operations-daily" element={<OperationsDailyPage />} />
             <Route path="/" element={<DashboardPage />} />
             <Route path="/stores" element={<StoresPage />} />
@@ -607,7 +583,8 @@ function Layout() {
             <Route path="/wechat/costs" element={<WechatCostsPage />} />
             <Route path="/change-password" element={<ChangePasswordPage />} />
             </Routes>
-          </Suspense>
+            </Suspense>
+          </div>
         </div>
       </main>
     </div>
@@ -620,7 +597,14 @@ function App() {
       <Suspense fallback={<PageLoading />}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/v2" element={<V2WorkbenchPage />} />
+          <Route
+            path="/v2"
+            element={
+              <AuthGuard>
+                <V2WorkbenchPage />
+              </AuthGuard>
+            }
+          />
           <Route
             path="/*"
             element={

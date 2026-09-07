@@ -310,6 +310,11 @@ create index if not exists idx_inventory_transactions_item_time on inventory_tra
 create index if not exists idx_inventory_transactions_batch on inventory_transactions (batch_id, occurred_at desc);
 create index if not exists idx_inventory_transactions_reference on inventory_transactions (reference_type, reference_id);
 
+alter table inventory_transactions add column if not exists biz_type varchar(64);
+alter table inventory_transactions add column if not exists store_name varchar(255);
+alter table inventory_transactions add column if not exists sale_amount numeric(20,6);
+create index if not exists idx_inventory_transactions_store on inventory_transactions (store_name, occurred_at desc) where store_name is not null;
+
 create table if not exists order_cost_snapshots (
     order_id varchar(128) primary key,
     platform varchar(32) not null,

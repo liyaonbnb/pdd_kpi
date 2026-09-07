@@ -3,11 +3,11 @@ import { Search, BarChart3 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { PageHeader, StatCard, FilterBar, FilterItem, EmptyState } from "@/components/page-kit"
 import { MetricLineChart } from "@/components/metric-line-chart"
 import { getStores, getTmallAnalysis, getTmallTrend, type Store } from "@/api/client"
 
@@ -16,6 +16,15 @@ function formatNumber(v: any, digits = 2) {
   if (typeof v === "number") return v.toLocaleString("zh-CN", { maximumFractionDigits: digits })
   return v
 }
+
+const CHART_COLORS = [
+  "hsl(var(--chart-1))",
+  "hsl(var(--chart-2))",
+  "hsl(var(--chart-3))",
+  "hsl(var(--chart-4))",
+  "hsl(var(--chart-5))",
+]
+const chartColor = (i: number) => CHART_COLORS[i % CHART_COLORS.length]
 
 const kpiGroups = [
   {
@@ -133,36 +142,30 @@ export function TmallMetricsPage() {
   const kpis = data?.kpis || {}
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-2xl font-bold">天猫指标</h2>
-      <Card>
-        <CardContent className="pt-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
-            <div className="space-y-2">
-              <Label>店铺</Label>
-              <Select value={storeName} onChange={(e) => setStoreName(e.target.value)}>
-                <option value="">选择店铺</option>
-                {stores.map((s) => (
-                  <option key={s.id} value={s.name}>
-                    {s.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>开始日期</Label>
-              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>结束日期</Label>
-              <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-            </div>
-            <Button onClick={handleAnalyze} disabled={loading}>
-              <Search className="h-4 w-4 mr-1" /> {loading ? "分析中..." : "分析"}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+    <div>
+      <PageHeader title="天猫指标" description="按店铺和日期范围分析天猫经营指标" />
+
+      <FilterBar>
+        <FilterItem label="店铺">
+          <Select value={storeName} onChange={(e) => setStoreName(e.target.value)}>
+            <option value="">选择店铺</option>
+            {stores.map((s) => (
+              <option key={s.id} value={s.name}>
+                {s.name}
+              </option>
+            ))}
+          </Select>
+        </FilterItem>
+        <FilterItem label="开始日期">
+          <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+        </FilterItem>
+        <FilterItem label="结束日期">
+          <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+        </FilterItem>
+        <Button onClick={handleAnalyze} disabled={loading}>
+          <Search className="h-4 w-4" /> {loading ? "分析中..." : "分析"}
+        </Button>
+      </FilterBar>
 
       {data && (
         <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -182,19 +185,18 @@ export function TmallMetricsPage() {
                     <CardTitle>{group.title}</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                       {items.map((item) => (
-                        <Card key={item.key}>
-                          <CardHeader className="pb-2">
-                            <CardDescription className="text-xs">{item.label}</CardDescription>
-                          </CardHeader>
-                          <CardContent>
-                            <CardTitle className="text-xl">
-                              {formatNumber(kpis[item.key])}{" "}
-                              {item.unit && <span className="text-sm font-normal text-muted-foreground">{item.unit}</span>}
-                            </CardTitle>
-                          </CardContent>
-                        </Card>
+                        <StatCard
+                          key={item.key}
+                          label={item.label}
+                          value={
+                            <>
+                              {formatNumber(kpis[item.key])}
+                              {item.unit && <span className="text-sm font-normal text-muted-foreground"> {item.unit}</span>}
+                            </>
+                          }
+                        />
                       ))}
                     </div>
                   </CardContent>
@@ -218,49 +220,49 @@ export function TmallMetricsPage() {
                     title: "成交与消耗",
                     description: "消耗、成交金额、净成交金额",
                     metrics: [
-                      { key: "spend", name: "消耗", color: "#ef4444", unit: "元" },
-                      { key: "gmv", name: "成交金额", color: "#3b82f6", unit: "元" },
-                      { key: "valid_gmv", name: "净成交金额", color: "#22c55e", unit: "元" },
-                      { key: "promo_gmv", name: "推广成交", color: "#a855f7", unit: "元" },
-                      { key: "actual_revenue", name: "实际收入", color: "#f97316", unit: "元" },
+                      { key: "spend", name: "消耗", unit: "元" },
+                      { key: "gmv", name: "成交金额", unit: "元" },
+                      { key: "valid_gmv", name: "净成交金额", unit: "元" },
+                      { key: "promo_gmv", name: "推广成交", unit: "元" },
+                      { key: "actual_revenue", name: "实际收入", unit: "元" },
                     ],
                   },
                   {
                     title: "订单与流量",
                     description: "订单数、点击量、曝光量",
                     metrics: [
-                      { key: "order_count", name: "订单数", color: "#8b5cf6" },
-                      { key: "valid_order_count", name: "净订单数", color: "#06b6d4" },
-                      { key: "clicks", name: "点击", color: "#f59e0b" },
-                      { key: "exposure", name: "曝光", color: "#64748b" },
+                      { key: "order_count", name: "订单数" },
+                      { key: "valid_order_count", name: "净订单数" },
+                      { key: "clicks", name: "点击" },
+                      { key: "exposure", name: "曝光" },
                     ],
                   },
                   {
                     title: "效率指标",
                     description: "ROI、点击率、转化率",
                     metrics: [
-                      { key: "roi", name: "ROI", color: "#ef4444" },
-                      { key: "valid_roi", name: "净ROI", color: "#3b82f6" },
-                      { key: "ctr", name: "点击率", color: "#22c55e", unit: "%" },
-                      { key: "cvr", name: "转化率", color: "#f59e0b", unit: "%" },
+                      { key: "roi", name: "ROI" },
+                      { key: "valid_roi", name: "净ROI" },
+                      { key: "ctr", name: "点击率", unit: "%" },
+                      { key: "cvr", name: "转化率", unit: "%" },
                     ],
                   },
                   {
                     title: "推广效果",
                     description: "加购、收藏、成交新客",
                     metrics: [
-                      { key: "cart_count", name: "加购数", color: "#3b82f6" },
-                      { key: "collect_count", name: "收藏数", color: "#22c55e" },
-                      { key: "new_buyer_count", name: "成交新客数", color: "#f97316" },
+                      { key: "cart_count", name: "加购数" },
+                      { key: "collect_count", name: "收藏数" },
+                      { key: "new_buyer_count", name: "成交新客数" },
                     ],
                   },
                   {
                     title: "成本与利润",
                     description: "成本、毛利润、盈亏",
                     metrics: [
-                      { key: "total_cost", name: "总成本", color: "#64748b", unit: "元" },
-                      { key: "gross_profit", name: "毛利润", color: "#22c55e", unit: "元" },
-                      { key: "profit_loss", name: "盈亏", color: "#ef4444", unit: "元" },
+                      { key: "total_cost", name: "总成本", unit: "元" },
+                      { key: "gross_profit", name: "毛利润", unit: "元" },
+                      { key: "profit_loss", name: "盈亏", unit: "元" },
                     ],
                   },
                 ].map((chart) => (
@@ -269,7 +271,7 @@ export function TmallMetricsPage() {
                     title={chart.title}
                     description={chart.description}
                     data={trend}
-                    metrics={chart.metrics}
+                    metrics={chart.metrics.map((m, i) => ({ ...m, color: chartColor(i) }))}
                   />
                 ))}
               </CardContent>
@@ -318,8 +320,8 @@ export function TmallMetricsPage() {
                       ))}
                       {data.product_metrics.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={productColumns.length} className="text-center text-muted-foreground">
-                            无数据
+                          <TableCell colSpan={productColumns.length}>
+                            <EmptyState title="无数据" hint="当前筛选条件下没有商品指标" />
                           </TableCell>
                         </TableRow>
                       )}

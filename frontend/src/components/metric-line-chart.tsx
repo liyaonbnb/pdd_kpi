@@ -14,6 +14,8 @@ interface MetricLineChartProps {
   description?: string
   metrics: MetricConfig[]
   hiddenKeys?: Set<string>
+  /** 外部已用 Card 包裹并提供标题时，隐藏组件自带标题 */
+  hideHeader?: boolean
 }
 
 function formatValue(v: any) {
@@ -22,7 +24,9 @@ function formatValue(v: any) {
   return v
 }
 
-export function MetricLineChart({ data, title, description, metrics, hiddenKeys }: MetricLineChartProps) {
+const axisTick = { fontSize: 12, fill: "hsl(var(--muted-foreground))" }
+
+export function MetricLineChart({ data, title, description, metrics, hiddenKeys, hideHeader }: MetricLineChartProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
   // 根据外部 hiddenKeys 初始化/更新选中状态
@@ -53,11 +57,13 @@ export function MetricLineChart({ data, title, description, metrics, hiddenKeys 
   const activeMetrics = metrics.filter((m) => selected.has(m.key))
 
   return (
-    <div className="space-y-2">
-      <div>
-        <h3 className="text-sm font-semibold">{title}</h3>
-        {description && <p className="text-xs text-muted-foreground">{description}</p>}
-      </div>
+    <div className="space-y-3">
+      {!hideHeader && (
+        <div className="space-y-0.5">
+          <h3 className="text-sm font-semibold tracking-tight">{title}</h3>
+          {description && <p className="text-xs text-muted-foreground">{description}</p>}
+        </div>
+      )}
       <div className="flex flex-wrap gap-1.5">
         {metrics.map((m) => {
           const isActive = selected.has(m.key)
@@ -65,7 +71,7 @@ export function MetricLineChart({ data, title, description, metrics, hiddenKeys 
             <button
               key={m.key}
               onClick={() => toggle(m.key)}
-              className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+              className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
                 isActive ? "text-white" : "bg-muted text-muted-foreground hover:bg-muted/80"
               }`}
               style={
@@ -80,21 +86,23 @@ export function MetricLineChart({ data, title, description, metrics, hiddenKeys 
         })}
       </div>
       {activeMetrics.length === 0 ? (
-        <div className="h-[200px] flex items-center justify-center text-xs text-muted-foreground rounded-md border border-dashed">
+        <div className="flex h-[200px] items-center justify-center rounded-md border border-dashed text-xs text-muted-foreground">
           点击上方按钮选择要展示的指标
         </div>
       ) : (
         <div className="h-[240px] w-full">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-              <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-              <YAxis tick={{ fontSize: 12 }} />
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+              <XAxis dataKey="date" tick={axisTick} tickLine={false} axisLine={{ stroke: "hsl(var(--border))" }} />
+              <YAxis tick={axisTick} tickLine={false} axisLine={false} width={48} />
               <Tooltip
                 contentStyle={{
                   backgroundColor: "hsl(var(--card))",
                   borderColor: "hsl(var(--border))",
                   borderRadius: "0.5rem",
+                  color: "hsl(var(--card-foreground))",
+                  fontSize: 12,
                 }}
                 formatter={(value: any, name: any) => {
                   const cfg = metrics.find((m) => m.name === name)

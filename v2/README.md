@@ -7,6 +7,9 @@ V2 是新系统的领域层和数据层起点，和当前线上 Parquet/JSON 版
 - `schema.sql`：PostgreSQL 初始数据模型
 - `inventory_engine.py`：批次 FIFO、永续加权平均和订单扣库的纯 Python 引擎
 - `order_engine.py`：按支付时间处理订单、展开 BOM、计算订单预计快递费并生成库存异常
+- `stock_io.py`：网店管家入库/出库明细与单品/组合商品的文件批量导入（入库直接建批次、出库 FIFO 直接扣库）
+- `costs.py`：旧版 `/costs/global` 形态的成本接口，成本取库存加权平均，无库存时回退到成本版本
+- `v1_compat.py`：V1 兼容路由（/api/stores、/api/dashboard/summary）
 - `MIGRATION.md`：旧版 Parquet/JSON 数据迁移和虚拟期初批次方案
 
 旧版数据不会被这个目录自动修改。迁移程序会在 schema 和业务规则核对通过后单独接入。

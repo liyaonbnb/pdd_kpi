@@ -16,6 +16,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Skeleton } from "@/components/ui/skeleton"
+import { EmptyState, PageHeader } from "@/components/page-kit"
 import {
   askKnowledgeAssistant,
   getKnowledgeStatus,
@@ -160,21 +162,33 @@ export function KnowledgeAssistantPage() {
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-5">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="flex items-center gap-2 text-2xl font-bold">
-          <BookOpenCheck className="h-6 w-6" />
-          运营知识助手
-        </h2>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={loadInitialData}
-          disabled={statusLoading}
-          title="刷新知识库状态"
-        >
-          <RefreshCw className={`h-4 w-4 ${statusLoading ? "animate-spin" : ""}`} />
-        </Button>
-      </div>
+      <PageHeader
+        title={(
+          <span className="flex items-center gap-2">
+            <BookOpenCheck className="h-5 w-5" />
+            运营知识助手
+          </span>
+        )}
+        actions={(
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={loadInitialData}
+            disabled={statusLoading}
+            title="刷新知识库状态"
+          >
+            <RefreshCw className={`h-4 w-4 ${statusLoading ? "animate-spin" : ""}`} />
+          </Button>
+        )}
+      />
+
+      {!status && statusLoading ? (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Skeleton key={index} className="h-20 w-full" />
+          ))}
+        </div>
+      ) : null}
 
       {status ? (
         <div className="grid grid-cols-2 border-y md:grid-cols-4">
@@ -324,7 +338,7 @@ export function KnowledgeAssistantPage() {
             </Badge>
             {response.business_context ? <Badge variant="outline">已附带店铺数据</Badge> : null}
           </div>
-          <div className="whitespace-pre-wrap text-sm leading-7">{response.answer}</div>
+          <div className="whitespace-pre-wrap rounded-lg bg-muted p-4 text-sm leading-7">{response.answer}</div>
           {response.ai_error ? (
             <div className="text-xs text-destructive">AI 调用失败，已降级为知识检索：{response.ai_error}</div>
           ) : null}
@@ -338,9 +352,7 @@ export function KnowledgeAssistantPage() {
             <span className="text-xs text-muted-foreground">{response.count} 条</span>
           </div>
           {response.message ? (
-            <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-              {response.message}
-            </div>
+            <EmptyState title={response.message} className="rounded-lg border border-dashed" />
           ) : response.results.length > 0 ? (
             <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
               {response.results.map((item) => (
@@ -348,9 +360,7 @@ export function KnowledgeAssistantPage() {
               ))}
             </div>
           ) : (
-            <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-              没有匹配资料
-            </div>
+            <EmptyState title="没有匹配资料" className="rounded-lg border border-dashed" />
           )}
         </section>
       ) : null}

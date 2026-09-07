@@ -4,6 +4,10 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select } from "@/components/ui/select"
+import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
+import { PageHeader, EmptyState } from "@/components/page-kit"
 import {
   Table,
   TableBody,
@@ -252,14 +256,19 @@ export function UsersPage() {
   )
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-2">
-        <Users className="h-5 w-5" />
-        <h1 className="text-2xl font-bold">用户管理</h1>
-      </div>
+    <div>
+      <PageHeader
+        title={
+          <span className="flex items-center gap-2">
+            <Users className="h-5 w-5 text-muted-foreground" />
+            用户管理
+          </span>
+        }
+        description="开通子账号并分配店铺与功能权限"
+      />
 
       {error && (
-        <div className="rounded-md bg-destructive/10 px-4 py-2 text-sm text-destructive">
+        <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-[13px] text-destructive">
           {error}
         </div>
       )}
@@ -292,14 +301,13 @@ export function UsersPage() {
               </div>
               <div className="space-y-2">
                 <Label>角色</Label>
-                <select
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                <Select
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value as "sub" | "master")}
                 >
                   <option value="sub">子账号</option>
                   <option value="master">主账号</option>
-                </select>
+                </Select>
               </div>
             </div>
             {newRole === "sub" && (
@@ -322,11 +330,11 @@ export function UsersPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="mt-4">
         <CardHeader>
           <CardTitle className="text-base">用户列表</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
@@ -343,9 +351,9 @@ export function UsersPage() {
                   <TableCell className="font-medium">{user.username}</TableCell>
                   <TableCell>
                     {user.role === "master" ? (
-                      <span className="rounded bg-primary/10 px-2 py-1 text-xs text-primary">主账号</span>
+                      <Badge variant="default">主账号</Badge>
                     ) : (
-                      <span className="rounded bg-muted px-2 py-1 text-xs text-muted-foreground">子账号</span>
+                      <Badge variant="secondary">子账号</Badge>
                     )}
                   </TableCell>
                   <TableCell>
@@ -420,10 +428,20 @@ export function UsersPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              {users.length === 0 && (
+              {loading && users.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                    暂无用户
+                  <TableCell colSpan={5} className="p-4">
+                    <div className="space-y-2">
+                      <Skeleton className="h-8 w-full" />
+                      <Skeleton className="h-8 w-full" />
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )}
+              {!loading && users.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5}>
+                    <EmptyState title="暂无用户" />
                   </TableCell>
                 </TableRow>
               )}

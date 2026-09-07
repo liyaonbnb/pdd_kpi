@@ -3,9 +3,11 @@ import { Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
+import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { PageHeader, FilterBar, FilterItem, EmptyState } from "@/components/page-kit"
 import { getStores, getDouyinOrders, type Store } from "@/api/client"
 
 function formatNumber(v: any, digits = 2) {
@@ -44,37 +46,32 @@ export function DouyinOrdersPage() {
   }
 
   const columns = orders.length > 0 ? Object.keys(orders[0]) : []
+  const colSpan = Math.max(columns.length, 1)
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-2xl font-bold">抖音订单</h2>
+    <div>
+      <PageHeader title="抖音订单" description="按店铺和日期查询抖音订单明细数据" />
 
-      {message && <div className="text-sm p-3 rounded-md bg-destructive/10 text-destructive">{message}</div>}
+      {message && <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{message}</div>}
 
-      <Card>
-        <CardContent className="pt-6">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
-            <div className="space-y-2">
-              <Label>店铺</Label>
-              <Select value={storeName} onChange={(e) => setStoreName(e.target.value)}>
-                <option value="">选择店铺</option>
-                {stores.map((s) => (
-                  <option key={s.id} value={s.name}>
-                    {s.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>日期</Label>
-              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-            </div>
-            <Button onClick={handleSearch} disabled={loading}>
-              <Search className="h-4 w-4 mr-1" /> {loading ? "查询中..." : "查询"}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+      <FilterBar>
+        <FilterItem label="店铺">
+          <Select value={storeName} onChange={(e) => setStoreName(e.target.value)}>
+            <option value="">选择店铺</option>
+            {stores.map((s) => (
+              <option key={s.id} value={s.name}>
+                {s.name}
+              </option>
+            ))}
+          </Select>
+        </FilterItem>
+        <FilterItem label="日期">
+          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        </FilterItem>
+        <Button onClick={handleSearch} disabled={loading}>
+          <Search className="h-4 w-4" /> {loading ? "查询中..." : "查询"}
+        </Button>
+      </FilterBar>
 
       <Card>
         <CardHeader>
@@ -90,19 +87,34 @@ export function DouyinOrdersPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {orders.slice(0, 100).map((row, idx) => (
-                <TableRow key={idx}>
-                  {columns.slice(0, 10).map((col) => (
-                    <TableCell key={col} className="text-xs max-w-[200px] truncate">
-                      {typeof row[col] === "number" ? formatNumber(row[col]) : String(row[col] ?? "")}
+              {loading &&
+                Array.from({ length: 6 }).map((_, i) => (
+                  <TableRow key={`sk-${i}`}>
+                    <TableCell colSpan={colSpan}>
+                      <Skeleton className="h-4 w-full" />
                     </TableCell>
-                  ))}
-                </TableRow>
-              ))}
-              {orders.length === 0 && (
+                  </TableRow>
+                ))}
+              {!loading &&
+                orders.slice(0, 100).map((row, idx) => (
+                  <TableRow key={idx}>
+                    {columns.slice(0, 10).map((col) => (
+                      <TableCell key={col} className="text-xs max-w-[200px] truncate">
+                        {col.includes("状态") ? (
+                          <Badge variant="secondary">{String(row[col] ?? "")}</Badge>
+                        ) : typeof row[col] === "number" ? (
+                          formatNumber(row[col])
+                        ) : (
+                          String(row[col] ?? "")
+                        )}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+              {!loading && orders.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={Math.max(columns.length, 1)} className="text-center text-muted-foreground">
-                    无订单数据
+                  <TableCell colSpan={colSpan}>
+                    <EmptyState title="无订单数据" hint="请选择店铺和日期后点击查询" />
                   </TableCell>
                 </TableRow>
               )}

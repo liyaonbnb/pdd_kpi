@@ -1,10 +1,11 @@
 import { useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
-import { Lock, ArrowLeft } from "lucide-react"
+import { Lock, ArrowLeft, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { PageHeader } from "@/components/page-kit"
 import { changePassword, logout } from "@/api/auth"
 
 export function ChangePasswordPage() {
@@ -55,24 +56,32 @@ export function ChangePasswordPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" onClick={handleBack}>
-          <ArrowLeft className="h-5 w-5" />
-        </Button>
-        <h1 className="text-2xl font-bold">修改密码</h1>
-      </div>
+      <PageHeader
+        title={(
+          <span className="flex items-center gap-1">
+            <Button variant="ghost" size="icon" onClick={handleBack} className="-ml-2">
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            修改密码
+          </span>
+        )}
+      />
 
-      <Card className="max-w-md">
+      <Card className="max-w-md shadow-sm">
         <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
+          <CardTitle className="flex items-center gap-2 text-base">
             <Lock className="h-4 w-4" />
             {forced ? "首次登录，请修改默认密码" : "修改登录密码"}
           </CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            {error && <div className="text-sm text-destructive">{error}</div>}
-            {success && <div className="text-sm text-green-600">{success}</div>}
+            {error && (
+              <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>
+            )}
+            {success && (
+              <div className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">{success}</div>
+            )}
             {!forced && (
               <div className="space-y-2">
                 <Label>原密码</Label>
@@ -103,6 +112,7 @@ export function ChangePasswordPage() {
               />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
+              {loading && <Loader2 className="h-4 w-4 animate-spin" />}
               {loading ? "保存中..." : "保存修改"}
             </Button>
           </form>

@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { PageHeader } from "@/components/page-kit"
 import {
   getStores,
   getAiConfigByPlatform,
@@ -229,35 +230,39 @@ export function AiWecomPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="text-2xl font-bold flex items-center gap-2">
-          <Bot className="h-6 w-6" />
-          AI & 企微
-        </h2>
-        <div className="flex rounded-lg bg-muted p-1 gap-1">
-          {PLATFORM_OPTIONS.map((p) => {
-            const active = platform === p.key
-            return (
-              <button
-                key={p.key}
-                onClick={() => setPlatform(p.key)}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                  active
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                }`}
-              >
-                {p.label}
-              </button>
-            )
-          })}
-        </div>
-      </div>
+      <PageHeader
+        title={(
+          <span className="flex items-center gap-2">
+            <Bot className="h-5 w-5" />
+            AI & 企微
+          </span>
+        )}
+        actions={(
+          <div className="flex gap-1 rounded-lg bg-muted p-1">
+            {PLATFORM_OPTIONS.map((p) => {
+              const active = platform === p.key
+              return (
+                <button
+                  key={p.key}
+                  onClick={() => setPlatform(p.key)}
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                    active
+                      ? "bg-card text-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              )
+            })}
+          </div>
+        )}
+      />
 
       {message && (
         <div
-          className={`text-sm p-3 rounded-md ${
-            messageKind === "success" ? "bg-green-100 text-green-800" : "bg-destructive/10 text-destructive"
+          className={`rounded-lg border px-3 py-2.5 text-sm ${
+            messageKind === "success" ? "border-success/30 bg-success/10 text-success" : "border-destructive/30 bg-destructive/10 text-destructive"
           }`}
         >
           {message}

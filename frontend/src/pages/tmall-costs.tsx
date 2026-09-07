@@ -5,6 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
+import { PageHeader, EmptyState } from "@/components/page-kit"
 import {
   getTmallCosts,
   saveTmallCosts,
@@ -129,7 +132,7 @@ export function TmallCostsPage() {
         <h3 className="text-sm font-semibold flex items-center gap-2">
           {icon}
           {title}
-          <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{rows.length}</span>
+          <Badge variant={variant === "warning" ? "destructive" : "success"}>{rows.length}</Badge>
         </h3>
         <div className="overflow-auto rounded-md border">
           <Table>
@@ -182,14 +185,40 @@ export function TmallCostsPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-2xl font-bold">天猫成本管理</h2>
+    <div>
+      <PageHeader
+        title="天猫成本管理"
+        description="维护商家编码成本，并处理未映射编码的商品"
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={handleExportPending} disabled={loading}>
+              <Download className="h-4 w-4 mr-1" /> 导出待维护
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleImportClick} disabled={loading}>
+              <Upload className="h-4 w-4 mr-1" /> 导入成本
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv"
+              className="hidden"
+              onChange={handleImportFile}
+            />
+            <Button variant="outline" size="sm" onClick={handleRefresh} disabled={loading}>
+              <RefreshCw className="h-4 w-4 mr-1" /> 刷新编码
+            </Button>
+            <Button size="sm" onClick={handleSave}>
+              <Save className="h-4 w-4 mr-1" /> 保存
+            </Button>
+          </>
+        }
+      />
       {message && (
         <div
-          className={`text-sm p-3 rounded-md ${
+          className={`mb-4 rounded-md border px-3.5 py-2.5 text-[13px] ${
             message.includes("成功") || message.includes("刷新") || message.includes("新增")
-              ? "bg-green-100 text-green-800"
-              : "bg-destructive/10 text-destructive"
+              ? "border-success/30 bg-success/10 text-success"
+              : "border-destructive/30 bg-destructive/10 text-destructive"
           }`}
         >
           {message}
@@ -198,59 +227,53 @@ export function TmallCostsPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>商家编码成本（全店铺通用）</CardTitle>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={handleExportPending} disabled={loading}>
-                <Download className="h-4 w-4 mr-1" /> 导出待维护
-              </Button>
-              <Button variant="outline" onClick={handleImportClick} disabled={loading}>
-                <Upload className="h-4 w-4 mr-1" /> 导入成本
-              </Button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv"
-                className="hidden"
-                onChange={handleImportFile}
-              />
-              <Button variant="outline" onClick={handleRefresh} disabled={loading}>
-                <RefreshCw className="h-4 w-4 mr-1" /> 刷新编码
-              </Button>
-              <Button onClick={handleSave}>
-                <Save className="h-4 w-4 mr-1" /> 保存
-              </Button>
-            </div>
-          </div>
+          <CardTitle className="text-base">商家编码成本（全店铺通用）</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {renderCostTable(
-            costs.filter((c) => c.product_cost <= 0 || c.logistics_cost <= 0),
-            "待维护商家编码",
-            "warning",
-            <AlertCircle className="h-5 w-5 text-yellow-500" />
-          )}
-          {renderCostTable(
-            costs.filter((c) => c.product_cost > 0 && c.logistics_cost > 0),
-            "已维护商家编码",
-            "success",
-            <CheckCircle2 className="h-5 w-5 text-green-500" />
+          {loading && costs.length === 0 ? (
+            <div className="space-y-3">
+              <Skeleton className="h-6 w-40" />
+              <Skeleton className="h-32 w-full" />
+              <Skeleton className="h-6 w-40" />
+              <Skeleton className="h-32 w-full" />
+            </div>
+          ) : (
+            <>
+              {renderCostTable(
+                costs.filter((c) => c.product_cost <= 0 || c.logistics_cost <= 0),
+                "待维护商家编码",
+                "warning",
+                <AlertCircle className="h-4 w-4 text-destructive" />
+              )}
+              {renderCostTable(
+                costs.filter((c) => c.product_cost > 0 && c.logistics_cost > 0),
+                "已维护商家编码",
+                "success",
+                <CheckCircle2 className="h-4 w-4 text-success" />
+              )}
+            </>
           )}
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="mt-4">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <AlertCircle className="h-5 w-5 text-yellow-500" />
+          <CardTitle className="flex items-center gap-2 text-base">
+            <AlertCircle className="h-4 w-4 text-destructive" />
             未映射商家编码的商品
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {unmapped.length === 0 ? (
-            <div className="text-sm text-muted-foreground py-4 text-center">所有商品都有商家编码或已完成映射</div>
+          {loading && unmapped.length === 0 ? (
+            <div className="space-y-2">
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-9 w-full" />
+            </div>
+          ) : unmapped.length === 0 ? (
+            <EmptyState title="所有商品都有商家编码或已完成映射" />
           ) : (
-            <div className="overflow-auto">
+            <div className="overflow-auto rounded-md border">
               <Table>
                 <TableHeader>
                   <TableRow>

@@ -16,7 +16,7 @@ DEFAULT_PAGES = [
     "douyin_overview", "douyin_import", "douyin_metrics", "douyin_orders", "douyin_costs",
     "tmall_overview", "tmall_import", "tmall_metrics", "tmall_orders", "tmall_costs",
     "wechat_overview", "wechat_import", "wechat_metrics", "wechat_orders", "wechat_costs",
-    "ai_wecom", "knowledge_assistant",
+    "ai_wecom", "knowledge_assistant", "v2_supply",
 ]
 
 
