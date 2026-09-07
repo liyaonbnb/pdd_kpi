@@ -63,6 +63,7 @@ jobs:
             (docker ps --format '{{.Names}} {{.Ports}}' || true)
             (pg_isready -h 127.0.0.1 -p 5432 || true)
             (pg_isready -h 127.0.0.1 -p 55432 || true)
+            sudo systemctl cat pdd-bi-v2-test pdd-bi-v2-test-db 2>/dev/null || true
             echo "=== v2 source ==="
             git rev-parse HEAD
             sha256sum v2/test_api.py v2/v1_compat.py
