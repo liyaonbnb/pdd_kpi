@@ -40,9 +40,9 @@
 - [x] v1_compat dashboard/summary 已改为从 V2 订单、推广和订单成本快照聚合
 
 ### P1 - 多平台等价页面
-- [ ] /api/douyin/*, /api/tmall/*, /api/wechat/*（兼容路由待补；V2 数据表已支持 platform 字段）
+- [~] `/api/{platform}/{dashboard,orders,trend,analysis,costs,records}` 已统一接入；导入、AI、企微等写入/自动化接口仍待迁移
 - [x] PDD 成本页面可通过 V2 单品/BOM 成本接口读取
-- [ ] 抖音/天猫/微信成本页面改用 V2 成本数据
+- [x] 抖音/天猫/微信成本读取接口改用 V2 BOM/单品成本数据
 - [ ] 四平台 parquet 数据全量迁入 PG（当前 legacy_full 只有 pdd）
 
 ### P2 - 自动化与系统
