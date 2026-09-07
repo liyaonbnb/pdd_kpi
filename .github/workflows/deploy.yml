@@ -67,9 +67,29 @@ jobs:
             sudo systemctl daemon-reload
             sudo systemctl enable pdd-v2
             sudo systemctl restart pdd-v2
+            sudo tee /etc/systemd/system/pdd-v2-web.service >/dev/null <<UNIT
+            [Unit]
+            Description=PDD BI Dashboard V2 Web
+            After=network.target pdd-v2.service
+            [Service]
+            User=$DEPLOY_USER
+            WorkingDirectory=$DEPLOY_DIR
+            Environment=V2_WEB_DIST=$DEPLOY_DIR/frontend/dist
+            Environment=V2_API_INTERNAL_URL=http://127.0.0.1:18000
+            ExecStart=$DEPLOY_DIR/venv/bin/uvicorn v2.test_web:app --host 0.0.0.0 --port 18080 --workers 1
+            Restart=always
+            RestartSec=3
+            [Install]
+            WantedBy=multi-user.target
+            UNIT
+            sudo systemctl daemon-reload
+            sudo systemctl enable pdd-v2-web
+            sudo systemctl restart pdd-v2-web
             sudo systemctl restart pdd_kpi
             sudo systemctl reload nginx
             sudo systemctl is-active --quiet pdd_kpi
+            sudo systemctl is-active --quiet pdd-v2
+            sudo systemctl is-active --quiet pdd-v2-web
             echo "=== nginx routes ==="
             sudo nginx -T 2>/dev/null | grep -E 'listen |server_name|proxy_pass|18000|18080' || true
             echo "=== database diagnostics ==="
@@ -106,3 +126,4 @@ jobs:
             curl --fail --silent --show-error http://127.0.0.1:18000/openapi.json >/tmp/pdd-v2-openapi.json
             grep -q 'dashboard/operations-daily' /tmp/pdd-v2-openapi.json
             grep -q '"/api/users"' /tmp/pdd-v2-openapi.json
+            curl --fail --silent --show-error http://127.0.0.1:18080/api/v2/config >/tmp/pdd-v2-web-config.json
