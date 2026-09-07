@@ -58,6 +58,10 @@ jobs:
             sudo systemctl restart pdd_kpi
             sudo systemctl reload nginx
             sudo systemctl is-active --quiet pdd_kpi
+            echo "=== v2 source ==="
+            git rev-parse HEAD
+            sha256sum v2/test_api.py v2/v1_compat.py
+            ./venv/bin/python -c "import v2.test_api as m; print(m.__file__); print([r.path for r in m.app.routes if 'operations-daily' in getattr(r, 'path', '') or getattr(r, 'path', '') == '/api/users'])"
             echo "=== services ==="
             systemctl --no-pager --type=service --state=running | grep -Ei 'pdd|uvicorn|gunicorn|api' || true
             echo "=== listeners ==="
