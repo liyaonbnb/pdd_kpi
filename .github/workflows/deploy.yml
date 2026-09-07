@@ -72,6 +72,8 @@ jobs:
             sudo systemctl cat pdd_kpi || true
             echo "=== pdd_kpi journal ==="
             sudo journalctl -u pdd_kpi -n 100 --no-pager || true
+            echo "=== pdd-v2 journal ==="
+            sudo journalctl -u pdd-v2 -n 120 --no-pager || true
             for i in $(seq 1 30); do
               if curl --fail --silent --show-error http://127.0.0.1:18000/health >/tmp/pdd-v2-health.json; then break; fi
               sleep 2
