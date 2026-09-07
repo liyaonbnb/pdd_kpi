@@ -27,6 +27,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/api/_v2_proxy_debug")
+async def proxy_debug():
+    """Read-only probe showing the API instance behind this web service."""
+    if httpx is None:
+        return JSONResponse({"detail": "httpx not installed"}, status_code=503)
+    async with httpx.AsyncClient(base_url=API_BASE, timeout=10.0) as client:
+        response = await client.get("/openapi.json")
+    if response.status_code != 200:
+        return JSONResponse({"status_code": response.status_code, "api_base": API_BASE}, status_code=502)
+    payload = response.json()
+    paths = payload.get("paths", {})
+    return {"api_base": API_BASE, "title": payload.get("info", {}).get("title"), "compat_routes": {"users": "/api/users" in paths, "operations_daily": "/api/dashboard/operations-daily" in paths}}
+
 
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 async def proxy_api(request: Request, path: str):
