@@ -37,6 +37,26 @@ DATABASE_URL = os.getenv(
 DEFAULT_WAREHOUSE = "KUNSHAN"
 BUNDLE_VERSION_EFFECTIVE_FROM = date(2020, 1, 1)
 COST_VERSION_EFFECTIVE_FROM = date(2020, 1, 1)
+DEFAULT_WAREHOUSE = "KUNSHAN"
+BUNDLE_VERSION_EFFECTIVE_FROM = date(2020, 1, 1)
+COST_VERSION_EFFECTIVE_FROM = date(2020, 1, 1)
+
+# Legacy data layout per platform. pdd keeps flat ordered files in processed/;
+# douyin/tmall/wechat keep <date>_orders.parquet under per-store subdirectories.
+PLATFORM_DIRS = {
+    "pdd": "processed",
+    "douyin": "processed_douyin",
+    "tmall": "processed_tmall",
+    "wechat": "processed_wechat",
+}
+# Map platform order columns onto the canonical names insert_orders_frame reads
+# (order_time->pay_time, amount->item_total, actual_revenue->user_paid,
+# spec->style_name, aftersale_status->aftersales_status). Keys = canonical.
+PLATFORM_ORDER_COLMAP = {
+    "douyin": {"order_time": "pay_time", "amount": "item_total", "actual_revenue": "user_paid", "spec": "style_name", "aftersale_status": "aftersales_status"},
+    "tmall": {"order_time": "pay_time", "amount": "item_total", "actual_revenue": "user_paid", "spec": "style_name"},
+    "wechat": {"order_time": "pay_time", "amount": "item_total", "actual_revenue": "user_paid"},
+}
 
 
 MONEY_CTX = Decimal("0.000001")
@@ -417,22 +437,77 @@ def insert_orders_frame(
     return rows_inserted
 
 
+
+def _platform_store(path: Path, platform: str, frame: pd.DataFrame) -> str:
+    """Store name for a legacy order file."""
+    if "store_name" in frame.columns:
+        name = text(frame["store_name"].iloc[0])
+        if name:
+            return name
+    if platform == "pdd":
+        return _store_from_filename(path)
+    return path.parent.name  # non-pdd: <platform_dir>/<store>/<date>_orders.parquet
+
+
+def _platform_date(path: Path, platform: str) -> Optional[date]:
+    """Report date for a legacy file; non-pdd files prefix the date."""
+    if platform == "pdd":
+        return date_from_filename(path)
+    m = re.match(r"(\d{4}-\d{2}-\d{2})_", path.name)
+    return datetime.strptime(m.group(1), "%Y-%m-%d").date() if m else None
+
+
+
+def _aggregate_order_lines(frame: pd.DataFrame, platform: str) -> pd.DataFrame:
+    """Collapse duplicate order lines before insert.
+
+    douyin reports one row per sub_order; when a single order_id repeats the same
+    (product_id, style_id) across sub_orders, the (order_id, product_id, style_id)
+    unique key would let the second row overwrite the first and silently drop
+    money. Aggregate those duplicates so the preserved line holds the summed
+    amounts and the DB total matches the legacy actual_revenue sum.
+    """
+    if platform != "douyin":
+        return frame
+    if not {"order_id", "product_id"}.issubset(frame.columns):
+        return frame
+    money_cols = []
+    for cand in ("user_paid", "item_total", "merchant_income", "quantity"):
+        if cand in frame.columns:
+            money_cols.append(cand)
+    group_keys = [c for c in ("order_id", "product_id", "style_id") if c in frame.columns]
+    agg = {c: "first" for c in frame.columns if c not in group_keys and c not in money_cols}
+    for c in money_cols:
+        agg[c] = "sum"
+    return frame.groupby(group_keys, as_index=False).agg(agg)
+
+def _normalize_order_frame(frame: pd.DataFrame, platform: str) -> pd.DataFrame:
+    """Rename platform-specific order columns to canonical insert_orders_frame names."""
+    if platform == "pdd":
+        return frame
+    rename = PLATFORM_ORDER_COLMAP.get(platform, {})
+    if rename:
+        frame = frame.rename(columns=rename)
+    if "_source_type" not in frame.columns:
+        frame["_source_type"] = platform
+    return frame
+
 def migrate_orders_for_file(
     cur: psycopg.Cursor,
     state: MigrationState,
     style_map: Dict[str, str],
     file_path: Path,
+    platform: str = "pdd",
 ) -> Tuple[int, int]:
     frame = pd.read_parquet(file_path)
     if frame.empty:
         return 0, 0
+    frame = _normalize_order_frame(frame, platform)
+    frame = _aggregate_order_lines(frame, platform)
 
     sha = file_sha256(file_path)
-    metric_date = date_from_filename(file_path)
-    store_name = text(frame["store_name"].iloc[0]) if "store_name" in frame.columns else ""
-    if not store_name:
-        store_name = _store_from_filename(file_path)
-    platform = "pdd"
+    metric_date = _platform_date(file_path, platform)
+    store_name = _platform_store(file_path, platform, frame)
 
     # Deduplicate import batch by source filename (store + date). A content hash
     # alone is not a safe idempotency key: distinct report dates can produce
@@ -591,19 +666,29 @@ def run_migration() -> Dict[str, Any]:
             item_count = migrate_costs(cur, state, costs_data)
             conn.commit()
 
-            order_files = sorted((LEGACY_BASE / "processed").glob("orders_*.parquet"))
             promo_files = sorted((LEGACY_BASE / "processed").glob("promo_*.parquet"))
 
             total_order_rows = 0
             total_order_lines = 0
-            for idx, file_path in enumerate(order_files, 1):
-                rows, lines = migrate_orders_for_file(cur, state, style_map, file_path)
-                total_order_rows += rows
-                total_order_lines += lines
-                if idx % 50 == 0:
-                    conn.commit()
-                    print(f"  orders {idx}/{len(order_files)}: {rows} rows, {lines} lines")
-            conn.commit()
+            total_order_files = 0
+            for platform, rel in PLATFORM_DIRS.items():
+                base = LEGACY_BASE / rel
+                if not base.is_dir():
+                    continue
+                order_files = (
+                    sorted(base.glob("orders_*.parquet"))
+                    if platform == "pdd"
+                    else sorted(base.glob("**/*_orders.parquet"))
+                )
+                total_order_files += len(order_files)
+                for idx, file_path in enumerate(order_files, 1):
+                    rows, lines = migrate_orders_for_file(cur, state, style_map, file_path, platform=platform)
+                    total_order_rows += rows
+                    total_order_lines += lines
+                    if idx % 50 == 0:
+                        conn.commit()
+                        print(f"  orders[{platform}] {idx}/{len(order_files)}: {rows} rows, {lines} lines")
+                conn.commit()
 
             total_promo_rows = 0
             total_promo_lines = 0
@@ -639,7 +724,7 @@ def run_migration() -> Dict[str, Any]:
         "database_url": DATABASE_URL.replace(":pdd_v2_test_local_2026", ":***"),
         "store_count": store_count,
         "item_count": item_count,
-        "order_files": len(order_files),
+        "order_files": total_order_files,
         "promo_files": len(promo_files),
         "total_order_rows": total_order_rows,
         "total_order_lines": total_order_lines,
