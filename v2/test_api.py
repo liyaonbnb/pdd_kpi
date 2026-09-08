@@ -1721,6 +1721,9 @@ app.include_router(platform_compat.router)
 from v2 import knowledge_compat
 app.include_router(knowledge_compat.router)
 
+from v2 import gap_compat
+app.include_router(gap_compat.router)
+
 from v2 import v1_compat
 app.router.routes.extend(v1_compat.router.routes)
 
