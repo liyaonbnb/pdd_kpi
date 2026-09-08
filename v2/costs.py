@@ -8,6 +8,7 @@ Design:
 """
 
 import os
+import hashlib
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -178,7 +179,8 @@ def refresh_global_cost_codes(
             unmapped = _row_dict(cur)
             added = 0
             for row in unmapped:
-                code = f"{row['product_id']}-{row['store_name']}"
+                raw_code = f"{row['product_id']}-{row['store_name']}"
+                code = raw_code if len(raw_code) <= 128 else raw_code[:95] + "-" + hashlib.sha1(raw_code.encode("utf-8")).hexdigest()[:32]
                 cur.execute("select 1 from bundles where code = %s", (code,))
                 if cur.fetchone():
                     continue

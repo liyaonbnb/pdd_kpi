@@ -4,6 +4,7 @@ from decimal import Decimal
 from typing import Any
 import psycopg
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from v2.test_api import DATABASE_URL
 from v2.v1_compat import _require_user, _v1_authorize_stores, _row_dict, _raw_text, _raw_num
 
@@ -147,3 +148,124 @@ def platform_wecom_preview(platform: str, report_date: date, user: dict = Depend
 def platform_wecom_send(platform: str, report_date: date, config: dict[str, Any], user: dict = Depends(_require_user)):
     _check(platform)
     return {"success": False, "error": "该平台企业微信发送配置尚未完成"}
+
+# ---------- platform-level cost sub-routes (V1 shape -> V2 PG) ----------
+
+class _costs_map_req(BaseModel):
+    product_id: str
+    merchant_code: str
+    style_id: str | None = None
+    product_name: str | None = None
+    store_name: str = ""
+def _costs_hub():
+    from v2 import costs as c
+    return c
+
+
+@router.get("/{platform}/costs/unmapped")
+def platform_unmapped(platform: str, start_date: date | None = None, end_date: date | None = None, store_name: str | None = None, user: dict = Depends(_require_user)):
+    hub = _costs_hub()
+    sql = """
+        select o.platform, o.store_name, l.product_id,
+               max(l.raw_payload->>'product_name') as product_name,
+               l.style_id, max(l.raw_payload->>'style_name') as style_name,
+               count(distinct o.order_id) as order_count,
+               min(o.payment_time::date) as first_date
+        from platform_order_lines l
+        join platform_orders o on o.id = l.order_id
+        where o.platform = %s
+          and not exists (
+            select 1 from platform_listing_mappings m
+            where m.platform = o.platform and m.store_name = o.store_name
+              and m.product_id = l.product_id and coalesce(m.style_id,'') = coalesce(l.style_id,'')
+          )
+    """
+    params = [platform]
+    if store_name:
+        sql += " and o.store_name = %s"; params.append(store_name)
+    if start_date:
+        sql += " and o.payment_time::date >= %s"; params.append(start_date)
+    if end_date:
+        sql += " and o.payment_time::date <= %s"; params.append(end_date)
+    sql += " group by o.platform, o.store_name, l.product_id, l.style_id order by count(distinct o.order_id) desc"
+    import psycopg as _pg
+    with _pg.connect(hub.DATABASE_URL) as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        for r in rows:
+            r.setdefault("style_id", "-"); r.setdefault("style_name", "-")
+            r.pop("platform", None)
+    return rows
+
+
+@router.get("/{platform}/costs/unmapped/count")
+def platform_unmapped_count(platform: str, store_name: str | None = None, start_date: date | None = None, end_date: date | None = None, user: dict = Depends(_require_user)):
+    hub = _costs_hub()
+    import psycopg as _pg
+    sql = """
+        select count(distinct (o.store_name, l.product_id, coalesce(l.style_id,'')) )
+        from platform_order_lines l join platform_orders o on o.id = l.order_id
+        where o.platform = %s
+          and not exists (
+            select 1 from platform_listing_mappings m
+            where m.platform = o.platform and m.store_name = o.store_name
+              and m.product_id = l.product_id and coalesce(m.style_id,'') = coalesce(l.style_id,'')
+          )
+    """
+    params=[platform]
+    if store_name: sql += " and o.store_name = %s"; params.append(store_name)
+    if start_date: sql += " and o.payment_time::date >= %s"; params.append(start_date)
+    if end_date: sql += " and o.payment_time::date <= %s"; params.append(end_date)
+    with _pg.connect(hub.DATABASE_URL) as conn, conn.cursor() as cur:
+        cur.execute(sql, params); unmapped = int(cur.fetchone()[0])
+    return {"pending": 0, "unmapped": unmapped}
+
+
+@router.post("/{platform}/costs/refresh")
+def platform_costs_refresh(platform: str, user: dict = Depends(_require_user)):
+    _check(platform)
+    hub = _costs_hub()
+    return hub.refresh_global_cost_codes(user)
+
+
+@router.post("/{platform}/costs/map")
+def platform_costs_map(platform: str, req: _costs_map_req, user: dict = Depends(_require_user)):
+    _check(platform)
+    hub = _costs_hub()
+    mapping = hub.ProductMappingRequest(
+        product_id=req.product_id, merchant_code=req.merchant_code,
+        style_id=req.style_id or None, product_name=req.product_name or None,
+        platform=platform, store_name=req.store_name or "",
+    )
+    return hub.map_product_to_merchant_code(mapping, user)
+
+
+# ---------- /api/wechat/kol-stats ----------
+
+@router.get("/wechat/kol-stats")
+def wechat_kol_stats(store_name: str | None = None, start_date: date | None = None, end_date: date | None = None, user: dict = Depends(_require_user)):
+    import psycopg as _pg
+    from v2 import costs as hub
+    sql = """
+        select l.raw_payload->>'kol_name' as kol_name,
+               l.raw_payload->>'kol_id' as kol_id,
+               l.raw_payload->>'channel' as channel,
+               count(distinct o.order_id) as order_count,
+               coalesce(sum((l.raw_payload->>'net_revenue')::numeric), 0) as net_revenue,
+               coalesce(sum((l.raw_payload->>'commission')::numeric), 0) as commission,
+               coalesce(sum((l.raw_payload->>'refund_amount')::numeric), 0) as refund_amount,
+               coalesce(sum((l.raw_payload->>'user_paid')::numeric),0) as gmv
+        from platform_order_lines l join platform_orders o on o.id = l.order_id
+        where o.platform = 'wechat'
+          and coalesce(l.raw_payload->>'kol_name','') <> ''
+    """
+    params=[]
+    if store_name: sql += " and o.store_name = %s"; params.append(store_name)
+    if start_date: sql += " and o.payment_time::date >= %s"; params.append(start_date)
+    if end_date: sql += " and o.payment_time::date <= %s"; params.append(end_date)
+    sql += " group by 1,2,3 order by order_count desc"
+    with _pg.connect(hub.DATABASE_URL) as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        rows=[{"kol_name":r[0],"kol_id":r[1],"channel":r[2],"order_count":int(r[3]),"net_revenue":float(r[4] or 0),"commission":float(r[5] or 0),"refund_amount":float(r[6] or 0),"gmv":float(r[7] or 0)} for r in cur.fetchall()]
+    return rows
