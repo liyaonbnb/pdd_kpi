@@ -91,7 +91,7 @@ def analysis(platform: str, store_name: str, start_date: date, end_date: date, u
 def costs(platform: str, user: dict=Depends(_require_user)):
     _check(platform)
     with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
-        cur.execute("select b.code as merchant_code,b.name as product_name,b.estimated_shipping_fee as logistics_cost,coalesce(sum(bc.quantity*ic.unit_cost),0) as product_cost from bundles b left join bundle_components bc on bc.bundle_id=b.id left join item_cost_versions ic on ic.item_id=bc.item_id and ic.is_current=true group by b.code,b.name,b.estimated_shipping_fee order by b.code")
+        cur.execute("select b.code as merchant_code,b.name as product_name,b.estimated_shipping_fee as logistics_cost,coalesce(sum(bc.quantity*ic.unit_cost),0) as product_cost from bundles b left join bundle_versions bv on bv.bundle_id=b.id left join bundle_components bc on bc.bundle_version_id=bv.id left join item_cost_versions ic on ic.item_id=bc.item_id and ic.effective_to is null group by b.code,b.name,b.estimated_shipping_fee order by b.code")
         return _row_dict(cur)
 
 @router.get("/{platform}/records")
