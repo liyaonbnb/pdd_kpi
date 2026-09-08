@@ -21,7 +21,7 @@ DATABASE_URL = os.getenv(
     "postgresql://pdd_v2_test:pdd_v2_test_local_2026@127.0.0.1:55432/pdd_v2_test",
 )
 
-router = APIRouter(prefix="/costs", tags=["costs"])
+router = APIRouter(prefix="/api/costs", tags=["costs"])
 
 
 class CostRecord(BaseModel):

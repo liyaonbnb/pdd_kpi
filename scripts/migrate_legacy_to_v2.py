@@ -7,7 +7,7 @@ Strategy (v2/MIGRATION.md):
 - Stores share the default KUNSHAN warehouse unless configured otherwise.
 - Promotion parquet files are inserted into promotion_metrics_daily.
 
-The script is idempotent via source_sha256 and ON CONFLICT DO NOTHING.
+The script is idempotent via source filename (store + date) and ON CONFLICT DO NOTHING.
 """
 
 from __future__ import annotations
@@ -434,10 +434,12 @@ def migrate_orders_for_file(
         store_name = _store_from_filename(file_path)
     platform = "pdd"
 
-    # Deduplicate import batch by sha
+    # Deduplicate import batch by source filename (store + date). A content hash
+    # alone is not a safe idempotency key: distinct report dates can produce
+    # identical files, and collapsing them silently drops that day's spend.
     cur.execute(
-        "select id from data_import_batches where source_sha256 = %s",
-        (sha,),
+        "select id from data_import_batches where data_type = %(dtype)s and platform = %(platform)s and coalesce(store_name, '') = %(store)s and source_filename = %(fname)s",
+        {"dtype": "orders", "platform": platform, "store": store_name, "fname": file_path.name},
     )
     row = cur.fetchone()
     if row:
@@ -494,8 +496,8 @@ def migrate_promos_for_file(
     platform = "pdd"
 
     cur.execute(
-        "select id from data_import_batches where source_sha256 = %s",
-        (sha,),
+        "select id from data_import_batches where data_type = %(dtype)s and platform = %(platform)s and coalesce(store_name, '') = %(store)s and source_filename = %(fname)s",
+        {"dtype": "promotions", "platform": platform, "store": store_name, "fname": file_path.name},
     )
     if cur.fetchone():
         return 0, 0
