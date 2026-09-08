@@ -21,6 +21,11 @@ PLATFORM_DIRS = {
     "tmall": "processed_tmall",
     "wechat": "processed_wechat",
 }
+
+# Non-pdd platforms keep order/product parquet under per-store subdirectories
+# (e.g. processed_douyin/<store>/<date>_orders.parquet), so they must be scanned
+# recursively. pdd uses flat processed/orders_<store>_<date>.parquet.
+RECURSIVE_PLATFORMS = {"douyin", "tmall", "wechat"}
 DATE_RE = re.compile(r"_(\d{4}-\d{2}-\d{2})$")
 
 
@@ -39,10 +44,13 @@ def scan_orders(files):
         stats["rows"] += len(df)
         if "order_id" in df.columns:
             stats["orders"].update(df["order_id"].astype(str))
-        if "user_paid" in df.columns:
-            stats["user_paid"] += float(pd.to_numeric(df["user_paid"], errors="coerce").fillna(0).sum())
-        if "item_total" in df.columns:
-            stats["item_total"] += float(pd.to_numeric(df["item_total"], errors="coerce").fillna(0).sum())
+        # pdd uses user_paid/item_total; douyin/tmall/wechat use actual_revenue/amount
+        up = "user_paid" if "user_paid" in df.columns else ("actual_revenue" if "actual_revenue" in df.columns else None)
+        it = "item_total" if "item_total" in df.columns else ("amount" if "amount" in df.columns else None)
+        if up:
+            stats["user_paid"] += float(pd.to_numeric(df[up], errors="coerce").fillna(0).sum())
+        if it:
+            stats["item_total"] += float(pd.to_numeric(df[it], errors="coerce").fillna(0).sum())
         d = file_date(f)
         if d:
             stats["dates"].append(d)
@@ -79,9 +87,11 @@ def main():
     legacy = {}
     for platform, dirname in PLATFORM_DIRS.items():
         d = base / dirname
+        pat = "**/*_orders.parquet" if platform in RECURSIVE_PLATFORMS else "orders_*.parquet"
+        ppat = "**/*_promo*.parquet" if platform in RECURSIVE_PLATFORMS else "promo_*.parquet"
         legacy[platform] = {
-            "orders": scan_orders(sorted(d.glob("orders_*.parquet"))) if d.is_dir() else None,
-            "promos": scan_promos(sorted(d.glob("promo_*.parquet"))) if d.is_dir() else None,
+            "orders": scan_orders(sorted(d.glob(pat))) if d.is_dir() else None,
+            "promos": scan_promos(sorted(d.glob(ppat))) if d.is_dir() else None,
         }
 
     pg = {}
