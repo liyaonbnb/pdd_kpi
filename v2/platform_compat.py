@@ -5,7 +5,7 @@ from typing import Any
 import psycopg
 from fastapi import APIRouter, Depends, Query
 from v2.test_api import DATABASE_URL
-from v2.v1_compat import _require_user, _v1_authorize_stores, _row_dict
+from v2.v1_compat import _require_user, _v1_authorize_stores, _row_dict, _raw_text, _raw_num
 
 router = APIRouter(prefix="/api", tags=["platform-compat"])
 PLATFORMS = {"douyin", "tmall", "wechat"}
@@ -27,7 +27,13 @@ def dashboard(platform: str, start_date: date|None=None, end_date: date|None=Non
     _check(platform); start=start_date or date.today(); end=end_date or start
     with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
         stores=_stores(cur,platform,user,store_names)
-        cur.execute("""select count(distinct o.order_id), coalesce(sum(l.quantity),0), coalesce(sum(l.line_amount),0), coalesce(sum(c.total_cost),0), coalesce(sum(c.product_cost),0), coalesce(sum(c.shipping_fee),0) from platform_orders o join platform_order_lines l on l.order_id=o.id left join order_cost_snapshots c on c.order_id=o.order_id where o.platform=%s and o.store_name=any(%s) and coalesce(o.payment_time::date,o.created_at::date) between %s and %s and not o.is_cancelled""",(platform,stores,start,end))
+        cur.execute("""select count(distinct o.order_id), coalesce(sum(l.quantity),0),
+                                  coalesce(sum(coalesce((l.raw_payload->>'user_paid')::numeric,0)),0),
+                                  coalesce(sum(c.total_cost),0), coalesce(sum(c.product_cost),0), coalesce(sum(c.shipping_fee),0)
+                          from platform_orders o join platform_order_lines l on l.order_id=o.id
+                          left join order_cost_snapshots c on c.order_id=o.order_id
+                          where o.platform=%s and o.store_name=any(%s)
+                            and coalesce(o.payment_time::date,o.created_at::date) between %s and %s and not o.is_cancelled""",(platform,stores,start,end))
         r=cur.fetchone() or (0,0,0,0,0,0)
     return {"platform":platform,"start_date":start.isoformat(),"end_date":end.isoformat(),"store_count":len(stores),"kpis":{"order_count":r[0],"quantity":r[1],"order_gmv":float(r[2] or 0),"total_cost":float(r[3] or 0),"total_product_cost":float(r[4] or 0),"total_logistics_cost":float(r[5] or 0)}}
 
@@ -35,8 +41,36 @@ def dashboard(platform: str, start_date: date|None=None, end_date: date|None=Non
 def orders(platform: str, store_name: str, date: date, user: dict=Depends(_require_user)):
     _check(platform)
     with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
-        cur.execute("select o.order_id,o.order_status,o.payment_time,l.product_id,l.style_id,l.quantity,l.line_amount,l.raw_payload from platform_orders o join platform_order_lines l on l.order_id=o.id where o.platform=%s and o.store_name=%s and coalesce(o.payment_time::date,o.created_at::date)=%s order by o.payment_time nulls last,o.order_id",(platform,store_name,date))
-        return _row_dict(cur)
+        cur.execute("select o.order_id,o.order_status,o.payment_time,l.product_id,l.style_id,l.quantity,l.raw_payload from platform_orders o join platform_order_lines l on l.order_id=o.id where o.platform=%s and o.store_name=%s and coalesce(o.payment_time::date,o.created_at::date)=%s order by o.payment_time nulls last,o.order_id",(platform,store_name,date))
+        rows=cur.fetchall()
+    records=[]
+    for order_id, order_status, payment_local, product_id, style_id, quantity, payload in rows:
+        payload = payload or {}
+        pay_time = _raw_text(payload, "pay_time", "order_time", "订单时间")
+        if not pay_time and payment_local is not None:
+            pay_time = payment_local.strftime("%Y-%m-%d %H:%M:%S")
+        record = {
+            "order_id": order_id,
+            "product_id": product_id,
+            "product_name": _raw_text(payload, "product_name", "商品名称") or None,
+            "style_id": style_id,
+            "style_name": _raw_text(payload, "style_name", "spec") or None,
+            "merchant_code": _raw_text(payload, "merchant_code") or None,
+            "quantity": float(quantity or 0),
+            "order_status": order_status or None,
+            "order_time": pay_time or None,
+            # canonical money (migration maps amount->item_total, actual_revenue->user_paid)
+            "item_total": _raw_num(payload, "item_total", "amount", "商品金额", "商品总价(元)"),
+            "user_paid": _raw_num(payload, "user_paid", "actual_revenue", "实付金额"),
+            "amount": _raw_num(payload, "item_total", "amount", "商品金额", "商品总价(元)"),
+            "actual_revenue": _raw_num(payload, "user_paid", "actual_revenue", "实付金额"),
+        }
+        # passthrough any remaining original columns for platform-specific fields
+        for key, value in payload.items():
+            if key not in record:
+                record[key] = value
+        records.append(record)
+    return records
 
 @router.get("/{platform}/trend")
 def trend(platform: str, store_names: list[str]=Query(...), start_date: date=Query(...), end_date: date=Query(...), user: dict=Depends(_require_user)):
@@ -49,7 +83,7 @@ def trend(platform: str, store_names: list[str]=Query(...), start_date: date=Que
 def analysis(platform: str, store_name: str, start_date: date, end_date: date, user: dict=Depends(_require_user)):
     _check(platform)
     with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
-        cur.execute("select l.product_id,coalesce(sum(l.quantity),0) order_count,coalesce(sum(l.line_amount),0) gmv from platform_orders o join platform_order_lines l on l.order_id=o.id where o.platform=%s and o.store_name=%s and coalesce(o.payment_time::date,o.created_at::date) between %s and %s and not o.is_cancelled group by l.product_id order by gmv desc",(platform,store_name,start_date,end_date))
+        cur.execute("select l.product_id,coalesce(sum(l.quantity),0) order_count,coalesce(sum(coalesce((l.raw_payload->>'user_paid')::numeric,0)),0) gmv from platform_orders o join platform_order_lines l on l.order_id=o.id where o.platform=%s and o.store_name=%s and coalesce(o.payment_time::date,o.created_at::date) between %s and %s and not o.is_cancelled group by l.product_id order by gmv desc",(platform,store_name,start_date,end_date))
         rows=_row_dict(cur)
     return {"product_metrics":rows,"style_metrics":[],"kpis":{}}
 
