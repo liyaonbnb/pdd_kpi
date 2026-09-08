@@ -34,8 +34,14 @@ def file_date(p: Path) -> str | None:
     return m.group(1) if m else None
 
 
-def scan_orders(files):
-    stats = {"files": 0, "rows": 0, "orders": set(), "dates": [], "user_paid": 0.0, "item_total": 0.0}
+def _store_name(path: Path, platform: str) -> str:
+    if platform == "pdd":
+        match = re.match(r"orders_(.+)_\d{4}-\d{2}-\d{2}\.parquet$", path.name)
+        return match.group(1) if match else path.parent.name
+    return path.parent.name
+
+def scan_orders(files, platform):
+    stats = {"files": 0, "rows": 0, "orders": set(), "store_orders": set(), "dates": [], "user_paid": 0.0, "item_total": 0.0}
     for f in files:
         df = pd.read_parquet(f)
         if df.empty:
@@ -44,6 +50,8 @@ def scan_orders(files):
         stats["rows"] += len(df)
         if "order_id" in df.columns:
             stats["orders"].update(df["order_id"].astype(str))
+            store = _store_name(f, platform)
+            stats["store_orders"].update((store, order_id) for order_id in df["order_id"].astype(str))
         # pdd uses user_paid/item_total; douyin/tmall/wechat use actual_revenue/amount
         up = "user_paid" if "user_paid" in df.columns else ("actual_revenue" if "actual_revenue" in df.columns else None)
         it = "item_total" if "item_total" in df.columns else ("amount" if "amount" in df.columns else None)
@@ -90,7 +98,7 @@ def main():
         pat = "**/*_orders.parquet" if platform in RECURSIVE_PLATFORMS else "orders_*.parquet"
         ppat = "**/*_promo*.parquet" if platform in RECURSIVE_PLATFORMS else "promo_*.parquet"
         legacy[platform] = {
-            "orders": scan_orders(sorted(d.glob(pat))) if d.is_dir() else None,
+            "orders": scan_orders(sorted(d.glob(pat)), platform) if d.is_dir() else None,
             "promos": scan_promos(sorted(d.glob(ppat))) if d.is_dir() else None,
         }
 
@@ -129,7 +137,7 @@ def main():
         o, p = data["orders"], data["promos"]
         print(f"\n[{platform}]")
         if o:
-            print(f"  orders: {o['files']} 文件 / {o['rows']} 行 / {len(o['orders'])} 个订单号 / 日期 {fmt_dates(o['dates'])}")
+            print(f"  orders: {o['files']} 文件 / {o['rows']} 行 / {len(o['orders'])} 个订单号 / {len(o['store_orders'])} 个店铺订单 / 日期 {fmt_dates(o['dates'])}")
             print(f"          user_paid 合计 {o['user_paid']:.2f} / item_total 合计 {o['item_total']:.2f}")
         else:
             print("  orders: 无目录或无文件")
@@ -160,7 +168,7 @@ def main():
     lo = legacy["pdd"]["orders"]
     pgo = pg["orders"].get("pdd")
     if lo and pgo:
-        print(f"pdd 订单号: 文件 {len(lo['orders'])} vs PG {pgo[1]} -> {'OK' if len(lo['orders']) == pgo[1] else 'DIFF'}")
+        print(f"pdd 店铺订单: 文件 {len(lo['store_orders'])} vs PG {pgo[1]} -> {'OK' if len(lo['store_orders']) == pgo[1] else 'DIFF'}")
         print(f"pdd user_paid: 文件 {lo['user_paid']:.2f} vs PG {float(pg['pdd_amounts'][0]):.2f} -> {'OK' if abs(lo['user_paid'] - float(pg['pdd_amounts'][0])) < 1 else 'DIFF'}")
     lp = legacy["pdd"]["promos"]
     pgp = pg["promos"].get("pdd")
