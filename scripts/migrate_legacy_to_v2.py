@@ -472,7 +472,9 @@ def _aggregate_order_lines(frame: pd.DataFrame, platform: str) -> pd.DataFrame:
     if not {"order_id", "product_id"}.issubset(frame.columns):
         return frame
     money_cols = []
-    for cand in ("user_paid", "item_total", "merchant_income", "quantity"):
+    for cand in ("user_paid", "item_total", "merchant_income", "quantity",
+                 "amount", "actual_revenue", "refund_amount", "tech_fee",
+                 "commission", "net_revenue"):
         if cand in frame.columns:
             money_cols.append(cand)
     group_keys = [c for c in ("order_id", "product_id", "style_id") if c in frame.columns]
@@ -482,12 +484,20 @@ def _aggregate_order_lines(frame: pd.DataFrame, platform: str) -> pd.DataFrame:
     return frame.groupby(group_keys, as_index=False).agg(agg)
 
 def _normalize_order_frame(frame: pd.DataFrame, platform: str) -> pd.DataFrame:
-    """Rename platform-specific order columns to canonical insert_orders_frame names."""
+    """Add canonical insert_orders_frame columns while keeping original names.
+
+    Non-pdd platforms use platform-specific column names (order_time, amount,
+    actual_revenue, spec, aftersale_status). We ADD canonical aliases so the
+    insert path can read them, but keep the original columns so a full_payload
+    insert preserves the exact legacy fields (refund_amount, sku_code, kol_name,
+    tech_fee, commission, net_revenue, ...) for the frontend orders tables.
+    """
     if platform == "pdd":
         return frame
-    rename = PLATFORM_ORDER_COLMAP.get(platform, {})
-    if rename:
-        frame = frame.rename(columns=rename)
+    colmap = PLATFORM_ORDER_COLMAP.get(platform, {})
+    for src, dst in colmap.items():
+        if src in frame.columns and dst not in frame.columns:
+            frame[dst] = frame[src]
     if "_source_type" not in frame.columns:
         frame["_source_type"] = platform
     return frame
@@ -540,6 +550,7 @@ def migrate_orders_for_file(
         bundles=state.bundles,
         bundle_versions=state.bundle_versions,
         warehouse_id=state.warehouses[DEFAULT_WAREHOUSE],
+        full_payload=(platform != "pdd"),
     )
 
     return len(frame), rows_inserted
