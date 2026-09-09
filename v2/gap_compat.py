@@ -45,6 +45,37 @@ def create_user(req: UserCreateIn, user: dict = Depends(_require_user)):
     return _safe_user(_load_v2_user(req.username) or {"username": req.username})
 
 
+
+# ---------- /api/ai/* (generic legacy AI page) ----------
+
+@router.get("/ai/config")
+def legacy_ai_config(user: dict = Depends(_require_user)):
+    return {"available": False}
+
+@router.post("/ai/config")
+def legacy_ai_update(config: dict[str, Any], user: dict = Depends(_require_user)):
+    if user.get("role") not in {"master", "admin"}:
+        raise HTTPException(status_code=403, detail="仅管理员可修改 AI 配置")
+    return {"available": False, "saved": bool(config), "message": "V2 AI 配置暂未落地"}
+
+@router.post("/ai/test")
+def legacy_ai_test(config: dict[str, Any], user: dict = Depends(_require_user)):
+    return {"success": False, "error": "V2 AI 提供商尚未配置"}
+
+class LegacyAIReportIn(BaseModel):
+    store_name: str = Field(default="", max_length=128)
+    start_date: date | None = None
+    end_date: date | None = None
+    config: dict[str, Any] = Field(default_factory=dict)
+
+@router.post("/ai/report")
+def legacy_ai_report(req: LegacyAIReportIn, user: dict = Depends(_require_user)):
+    return {
+        "store_name": req.store_name,
+        "start_date": (req.start_date or date.today()).isoformat(),
+        "end_date": (req.end_date or date.today()).isoformat(),
+        "content": "V2 AI 分析尚未配置提供商",
+    }
 # ---------- /api/users/{username} ----------
 
 class UserUpdateIn(BaseModel):
