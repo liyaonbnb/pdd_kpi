@@ -3,7 +3,9 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 import psycopg
-from fastapi import APIRouter, Depends, Query
+import csv
+import io
+from fastapi import APIRouter, Depends, Query, File, UploadFile
 from pydantic import BaseModel
 from v2.test_api import DATABASE_URL
 from v2.v1_compat import _require_user, _v1_authorize_stores, _row_dict, _raw_text, _raw_num
@@ -269,3 +271,77 @@ def wechat_kol_stats(store_name: str | None = None, start_date: date | None = No
         cur.execute(sql, params)
         rows=[{"kol_name":r[0],"kol_id":r[1],"channel":r[2],"order_count":int(r[3]),"net_revenue":float(r[4] or 0),"commission":float(r[5] or 0),"refund_amount":float(r[6] or 0),"gmv":float(r[7] or 0)} for r in cur.fetchall()]
     return rows
+
+# ---------- platform record deletion / cost export-import / system update ----------
+
+def _v1_helpers():
+    from v2.v1_compat import _require_master_v1, _v1_authorize_store, _actor_name, _ORDER_DATE_SQL
+    return _require_master_v1, _v1_authorize_store, _actor_name, _ORDER_DATE_SQL
+
+
+@router.delete("/{platform}/records/{store_name}/{day}")
+def platform_delete_record(platform: str, store_name: str, day: date, user: dict = Depends(_require_user)):
+    _check(platform)
+    master, auth_store, _, date_sql = _v1_helpers()
+    master(user); auth_store(user, store_name)
+    import psycopg as _pg
+    from v2 import costs as hub
+    with _pg.connect(hub.DATABASE_URL) as conn, conn.cursor() as cur:
+        cur.execute(f"delete from platform_orders o where o.platform=%s and o.store_name=%s and {date_sql} = %s", (platform, store_name, day))
+        cur.execute("delete from promotion_metrics_daily where platform=%s and store_name=%s and metric_date=%s", (platform, store_name, day))
+        conn.commit()
+    return {"deleted": True, "platform": platform, "store_name": store_name, "date": day.isoformat()}
+
+
+@router.get("/{platform}/costs/export")
+def platform_costs_export(platform: str, pending_only: bool = False, user: dict = Depends(_require_user)):
+    _check(platform)
+    from fastapi.responses import Response as _Resp
+    hub = _costs_hub()
+    import psycopg as _pg
+    sql = "select code, name, estimated_shipping_fee from bundles where is_active = true order by code"
+    with _pg.connect(hub.DATABASE_URL) as conn, conn.cursor() as cur:
+        cur.execute(sql); rows = cur.fetchall()
+    lines = ["merchant_code,product_name,logistics_cost"]
+    for code, name, fee in rows:
+        lines.append(f"{code},{name or ''},{float(fee or 0)}")
+    return _Resp(content=("\n".join(lines)).encode("utf-8"), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={platform}_costs.csv"})
+
+
+@router.post("/{platform}/costs/import")
+def platform_costs_import(platform: str, file: UploadFile = File(...), user: dict = Depends(_require_user)):
+    _check(platform)
+    raw = file.file.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("gb18030")
+    rows = list(csv.DictReader(io.StringIO(text)))
+    updated = 0
+    from v2 import costs as hub
+    with psycopg.connect(hub.DATABASE_URL) as conn, conn.cursor() as cur:
+        for row in rows:
+            code = (row.get("merchant_code") or row.get("商品编码") or row.get("商家编码") or "").strip()
+            if not code:
+                continue
+            name = (row.get("product_name") or row.get("商品名称") or code).strip()
+            fee_text = (row.get("logistics_cost") or row.get("物流成本") or "0").strip()
+            try:
+                fee = float(fee_text or 0)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"物流成本不是数字：{fee_text}")
+            cur.execute("update bundles set name=%s, estimated_shipping_fee=%s, updated_at=now() where code=%s returning id", (name, fee, code))
+            if cur.fetchone():
+                updated += 1
+            else:
+                cur.execute("insert into bundles(code,name,estimated_shipping_fee) values(%s,%s,%s) on conflict(code) do update set name=excluded.name,estimated_shipping_fee=excluded.estimated_shipping_fee", (code, name, fee))
+                updated += 1
+        conn.commit()
+    return {"updated": updated}
+
+
+@router.post("/system/update")
+def system_update(user: dict = Depends(_require_user)):
+    if user.get("role") not in {"master", "admin"}:
+        raise HTTPException(status_code=403, detail="权限不足")
+    return {"success": False, "up_to_date": True, "message": "测试环境不支持自动更新，请在服务器执行 git pull 后重启服务", "steps": ["cd /opt/pdd_bi_v2_test", "git pull origin master", "systemctl restart pdd-bi-v2-test pdd-bi-v2-test-web"]}
