@@ -19,3 +19,10 @@ frontend/node_modules/
 frontend/dist/
 .github_deploy_key
 .github_deploy_key.pub
+
+# 线下订单处理/临时脚本与资料
+gen_excel.py
+gen_md.py
+parse_orders.py
+发货订单*
+~$*
