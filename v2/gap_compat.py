@@ -9,10 +9,40 @@ from typing import Any
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from fastapi.responses import PlainTextResponse
 from v2 import costs as _costs
 from v2.v1_compat import _require_user, _safe_user, _load_v2_user
 
 router = APIRouter(prefix="/api", tags=["gap-compat"])
+
+
+class UserCreateIn(BaseModel):
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=8)
+    role: str = "sub"
+    allowed_stores: list[str] = []
+    allowed_pages: list[str] = []
+
+
+@router.post("/users")
+def create_user(req: UserCreateIn, user: dict = Depends(_require_user)):
+    _admin(user)
+    if req.role not in {"master", "admin", "sub", "operator", "viewer"}:
+        raise HTTPException(status_code=400, detail="不支持的角色")
+    from v2.test_api import bcrypt
+    if bcrypt is None:
+        raise HTTPException(status_code=503, detail="认证组件尚未安装")
+    password_hash = bcrypt.hashpw(req.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    with psycopg.connect(_costs.DATABASE_URL) as conn, conn.cursor() as cur:
+        cur.execute("insert into v2_users(username,password_hash,role,display_name,allowed_pages) values(%s,%s,%s,%s,%s) returning id", (req.username, password_hash, req.role, req.username, req.allowed_pages))
+        user_id = cur.fetchone()[0]
+        for store_name in sorted(set(req.allowed_stores)):
+            cur.execute("select platform from platform_stores where store_name=%s order by platform", (store_name,))
+            platforms = [row[0] for row in cur.fetchall()] or ["pdd"]
+            for platform in platforms:
+                cur.execute("insert into v2_user_store_permissions(user_id,platform,store_name) values(%s,%s,%s) on conflict do nothing", (user_id, platform, store_name))
+        conn.commit()
+    return _safe_user(_load_v2_user(req.username) or {"username": req.username})
 
 
 # ---------- /api/users/{username} ----------
@@ -141,3 +171,54 @@ def save_costs(req: _costs.SaveGlobalCostsRequest, user: dict = Depends(_costs._
 @router.post("/costs/refresh")
 def refresh_costs(user: dict = Depends(_costs._require_costs_user)):
     return _costs.refresh_global_cost_codes(user)
+
+
+# ---------- /api/exports ----------
+
+def _export_csv(kind: str, store_name: str, start_date: date, end_date: date) -> str:
+    from v2.v1_compat import metrics_analysis
+    import csv as _csv
+    import io as _io
+    data = metrics_analysis(
+        store_name=store_name,
+        start_date=start_date,
+        end_date=end_date,
+        user={"role": "master", "username": "export"},
+    )
+    rows = data.get(kind) or []
+    if not rows:
+        return "\ufeff"
+    fieldnames = list(rows[0].keys())
+    buf = _io.StringIO()
+    writer = _csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({k: ("" if v is None else v) for k, v in row.items()})
+    return "\ufeff" + buf.getvalue()
+
+
+@router.get("/exports/products")
+def export_products(store_name: str = Query(...), start_date: date = Query(...), end_date: date = Query(...), user: dict = Depends(_require_user)):
+    return PlainTextResponse(_export_csv("product_metrics", store_name, start_date, end_date))
+
+
+@router.get("/exports/styles")
+def export_styles(store_name: str = Query(...), start_date: date = Query(...), end_date: date = Query(...), user: dict = Depends(_require_user)):
+    return PlainTextResponse(_export_csv("style_metrics", store_name, start_date, end_date))
+
+
+# ---------- /api/backups ----------
+
+@router.get("/backups")
+def get_backups(user: dict = Depends(_require_user)):
+    _admin(user)
+    from backup import list_backups
+    return list_backups()
+
+
+@router.post("/backups")
+def trigger_backup(user: dict = Depends(_require_user)):
+    _admin(user)
+    from backup import create_backup
+    path = create_backup()
+    return {"ok": True, "path": path}

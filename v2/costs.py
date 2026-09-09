@@ -14,8 +14,9 @@ from decimal import Decimal
 from typing import Any
 
 import psycopg
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, File, UploadFile
 from pydantic import BaseModel, Field
+from fastapi.responses import PlainTextResponse
 
 DATABASE_URL = os.getenv(
     "V2_DATABASE_URL",
@@ -299,3 +300,59 @@ def map_product_to_merchant_code(
             )
             conn.commit()
     return {"success": True}
+
+
+@router.get("/global/export", response_class=PlainTextResponse)
+def export_global_costs(pending_only: bool = False, user: dict[str, Any] = Depends(_require_costs_user)) -> str:
+    import csv
+    import io as string_io
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            rows = _bundle_cost_rows(cur)
+    if pending_only:
+        rows = [row for row in rows if float(row.get("product_cost") or 0) <= 0 or float(row.get("logistics_cost") or 0) <= 0]
+    output = string_io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["商家编码", "商品名称", "商品成本/件", "物流成本/件"])
+    for row in rows:
+        writer.writerow([row.get("merchant_code", ""), row.get("product_name", ""), row.get("product_cost", 0), row.get("logistics_cost", 0)])
+    return "\ufeff" + output.getvalue()
+
+
+@router.post("/global/import")
+async def import_global_costs(file: UploadFile = File(...), user: dict[str, Any] = Depends(_require_costs_user)) -> dict[str, int]:
+    import csv
+    import io as string_io
+    raw = await file.read()
+    decoded = None
+    for encoding in ("utf-8-sig", "utf-8", "gbk", "gb18030"):
+        try:
+            decoded = raw.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    if decoded is None:
+        raise HTTPException(status_code=400, detail="无法读取 CSV，请检查编码")
+    reader = csv.DictReader(string_io.StringIO(decoded))
+    aliases = {
+        "商家编码": "merchant_code", "商家代码": "merchant_code", "商品编码": "merchant_code", "链接编码": "merchant_code", "merchant_code": "merchant_code",
+        "商品名称": "product_name", "商品名": "product_name", "product_name": "product_name",
+        "商品成本/件": "product_cost", "商品成本": "product_cost", "product_cost": "product_cost",
+        "物流成本/件": "logistics_cost", "物流成本": "logistics_cost", "logistics_cost": "logistics_cost",
+    }
+    records = []
+    for original in reader:
+        row = {aliases.get(str(key).strip().replace(" ", ""), key): value for key, value in original.items()}
+        code = str(row.get("merchant_code") or "").strip()
+        if not code:
+            continue
+        try:
+            product_cost = float(row.get("product_cost") or 0)
+            logistics_cost = float(row.get("logistics_cost") or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=f"成本数值无效：{code}")
+        records.append(CostRecord(merchant_code=code, product_name=str(row.get("product_name") or ""), product_cost=product_cost, logistics_cost=logistics_cost))
+    if not records:
+        raise HTTPException(status_code=400, detail="CSV 缺少有效成本记录")
+    result = save_global_costs(SaveGlobalCostsRequest(costs=records), user)
+    return {"updated": int(result.get("updated", 0))}
