@@ -30,7 +30,7 @@ def _build_report(report_date: date) -> dict[str, Any]:
             from order_cost_snapshots c
             left join platform_orders o on o.order_id = c.order_id
             left join (
-                select o2.order_id, sum(l2.line_amount) as order_gmv
+                select o2.order_id, sum(coalesce((l2.raw_payload->>'user_paid')::numeric, 0)) as order_gmv
                 from platform_orders o2
                 join platform_order_lines l2 on l2.order_id = o2.id
                 group by o2.order_id
@@ -112,4 +112,77 @@ def legacy_listen(payload: dict[str, Any], user: dict = Depends(_require_user)):
     return listen_wecom_chatid(config, timeout)
 
 
+daily_compat_router = APIRouter(prefix="/api/dashboard/operations-daily/wecom", tags=["operations-daily-wecom"])
 
+
+def _build_report_range(start: date, end: date) -> dict[str, Any]:
+    if start > end:
+        start, end = end, start
+    dates = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+    platforms: dict[str, dict] = {}
+    for day in dates:
+        rep = _build_report(day)
+        for p in rep["platforms"]:
+            b = platforms.setdefault(p["platform"], {"order_count": 0, "gmv": 0.0, "product_cost": 0.0, "shipping_fee": 0.0, "profit": 0.0})
+            b["order_count"] += p["order_count"]
+            b["gmv"] += p["gmv"]
+            b["product_cost"] += p["product_cost"]
+            b["shipping_fee"] += p["shipping_fee"]
+            b["profit"] += p["profit"]
+    plist = [{"platform": k, **v} for k, v in platforms.items()]
+    return {
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
+        "platforms": plist,
+        "totals": {
+            "order_count": sum(x["order_count"] for x in plist),
+            "gmv": sum(x["gmv"] for x in plist),
+            "product_cost": sum(x["product_cost"] for x in plist),
+            "shipping_fee": sum(x["shipping_fee"] for x in plist),
+            "profit": sum(x["profit"] for x in plist),
+        },
+    }
+
+
+def _report_text(report: dict[str, Any]) -> str:
+    lines = ["V2运营日报 %s ~ %s" % (report["start_date"], report["end_date"])]
+    for p in report["platforms"]:
+        lines.append("%s：订单%d，GMV %.2f，利润 %.2f" % (p["platform"], p["order_count"], p["gmv"], p["profit"]))
+    lines.append("合计：订单%d，GMV %.2f，利润 %.2f" % (report["totals"]["order_count"], report["totals"]["gmv"], report["totals"]["profit"]))
+    return "\n".join(lines)
+
+
+@daily_compat_router.post("/preview")
+def operations_daily_wecom_preview(start_date: date, end_date: date | None = None, user: dict = Depends(_require_user)):
+    end = end_date or start_date
+    report = _build_report_range(start_date, end)
+    return {
+        "draft_id": "od-%s-%s" % (start_date.isoformat(), end.isoformat()),
+        "report_date": end.isoformat(),
+        "start_date": start_date.isoformat(),
+        "end_date": end.isoformat(),
+        "content": _report_text(report),
+        "report": report,
+    }
+
+
+class RangeSendRequest(BaseModel):
+    start_date: date
+    end_date: date | None = None
+    draft_id: str | None = None
+    config: dict[str, Any] = {}
+
+
+@daily_compat_router.post("/send")
+def operations_daily_wecom_send(req: RangeSendRequest, user: dict = Depends(_require_user)):
+    if user.get("role") not in {"master", "admin"}:
+        raise HTTPException(status_code=403, detail="仅管理员可发送日报")
+    end = req.end_date or req.start_date
+    report = _build_report_range(req.start_date, end)
+    text = _report_text(report)
+    try:
+        from wecom import send_wecom_report
+        result = send_wecom_report(text, req.config)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="企业微信发送失败：%s" % exc) from exc
+    return {"report": report, "delivery": result, "draft_id": req.draft_id}

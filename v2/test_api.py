@@ -1714,6 +1714,7 @@ app.include_router(v2.stock_io.router)
 from v2 import automation_compat
 app.include_router(automation_compat.router)
 app.include_router(automation_compat.legacy_router)
+app.include_router(automation_compat.daily_compat_router)
 
 from v2 import platform_compat
 app.include_router(platform_compat.router)
