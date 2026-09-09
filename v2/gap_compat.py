@@ -36,7 +36,13 @@ def update_user(username: str, req: UserUpdateIn, user: dict = Depends(_require_
         raise HTTPException(status_code=404, detail="用户不存在")
     with psycopg.connect(_costs.DATABASE_URL) as conn, conn.cursor() as cur:
         if req.password:
-            cur.execute("update v2_users set password_hash=%s,password_changed=false,updated_at=now() where username=%s", (req.password, username))
+            if len(req.password) < 8:
+                raise HTTPException(status_code=400, detail="密码至少需要 8 个字符")
+            from v2.test_api import bcrypt
+            if bcrypt is None:
+                raise HTTPException(status_code=503, detail="认证组件尚未安装")
+            password_hash = bcrypt.hashpw(req.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+            cur.execute("update v2_users set password_hash=%s,password_changed=false,updated_at=now() where username=%s", (password_hash, username))
         if req.allowed_pages is not None:
             cur.execute("update v2_users set allowed_pages=%s,updated_at=now() where username=%s", (req.allowed_pages, username))
         if req.allowed_stores is not None:
