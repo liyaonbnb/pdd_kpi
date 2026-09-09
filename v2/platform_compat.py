@@ -5,7 +5,7 @@ from typing import Any
 import psycopg
 import csv
 import io
-from fastapi import APIRouter, Depends, Query, File, UploadFile
+from fastapi import APIRouter, Depends, Query, File, UploadFile, Form
 from pydantic import BaseModel
 from v2.test_api import DATABASE_URL
 from v2.v1_compat import _require_user, _v1_authorize_stores, _row_dict, _raw_text, _raw_num
@@ -345,3 +345,78 @@ def system_update(user: dict = Depends(_require_user)):
     if user.get("role") not in {"master", "admin"}:
         raise HTTPException(status_code=403, detail="权限不足")
     return {"success": False, "up_to_date": True, "message": "测试环境不支持自动更新，请在服务器执行 git pull 后重启服务", "steps": ["cd /opt/pdd_bi_v2_test", "git pull origin master", "systemctl restart pdd-bi-v2-test pdd-bi-v2-test-web"]}
+
+
+# ---------- /{platform}/import (upload orders + promo into V2 PG) ----------
+
+def _import_platform_files(platform: str, store_name: str, import_date: date, order_bytes, order_filename, promo_bytes, promo_filename, actor: str):
+    import hashlib
+    import uuid as _uuid
+    import pandas as pd
+    from psycopg.types.json import Json
+    from scripts.migrate_legacy_to_v2 import insert_orders_frame, insert_promo_frame, _normalize_order_frame, _aggregate_order_lines, _load_warehouses, parse_datetime
+    import scripts.migrate_legacy_to_v2 as mig
+
+    loader = {"douyin": "douyin_loader", "tmall": "tmall_loader", "wechat": "wechat_loader"}[platform]
+    mod = __import__(loader)
+    promo_df = None
+    order_df = None
+    if promo_bytes:
+        promo_df = mod.read_promotion_file(promo_bytes, promo_filename or "")
+    if order_bytes:
+        order_df = mod.read_order_file(order_bytes, order_filename or "")
+    if promo_df is None and order_df is None:
+        raise ValueError("请至少上传推广数据或订单数据中的一个")
+    if order_df is not None and not order_df.empty:
+        order_df = _aggregate_order_lines(order_df, platform)
+        order_df = _normalize_order_frame(order_df, platform)
+
+    order_hash = hashlib.sha256(order_bytes).hexdigest() if order_bytes else None
+    promo_hash = hashlib.sha256(promo_bytes).hexdigest() if promo_bytes else None
+
+    batch_id = _uuid.uuid4()
+    results = []
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+        warehouses = _load_warehouses(cur)
+        warehouse_id = warehouses.get("KUNSHAN")
+        if not warehouse_id:
+            cur.execute("select id from warehouses where code='KUNSHAN'")
+            row = cur.fetchone()
+            if row:
+                warehouse_id = row[0]
+        from v2.v1_compat import _load_bundle_maps, _load_listing_style_map
+        bundles, bundle_versions = _load_bundle_maps(cur)
+        style_map = _load_listing_style_map(cur, platform)
+
+        # promo
+        if promo_df is not None and not promo_df.empty:
+            cur.execute("insert into data_import_batches (platform,store_name,data_type,source_filename,source_sha256,period_from,period_to,status,row_count,created_by) values (%s,%s,'promotions',%s,%s,%s,%s,'succeeded',%s,%s) returning id",(platform,store_name,promo_filename or "",promo_hash,import_date,import_date,len(promo_df),actor))
+            p_batch=cur.fetchone()[0]
+            inserted=insert_promo_frame(cur,batch_id=p_batch,platform=platform,store_name=store_name,metric_date=import_date,frame=promo_df)
+            results.append({"date": import_date.isoformat(), "promo_saved": True})
+        # orders
+        if order_df is not None and not order_df.empty and "order_id" in order_df.columns:
+            period_min = parse_datetime(str(order_df.get("pay_time").dropna().min())) if "pay_time" in order_df.columns else None
+            period_max = parse_datetime(str(order_df.get("pay_time").dropna().max())) if "pay_time" in order_df.columns else None
+            cur.execute("insert into data_import_batches (platform,store_name,data_type,source_filename,source_sha256,period_from,period_to,status,row_count,created_by) values (%s,%s,'orders',%s,%s,%s,%s,'succeeded',%s,%s) returning id",(platform,store_name,order_filename or "",order_hash,(period_min or import_date),(period_max or import_date),len(order_df),actor))
+            o_batch=cur.fetchone()[0]
+            inserted=insert_orders_frame(cur,batch_id=o_batch,platform=platform,store_name=store_name,frame=order_df,style_map=style_map,bundles=bundles,bundle_versions=bundle_versions,warehouse_id=warehouse_id,reassign_batch=True,full_payload=True)
+            results.append({"date": import_date.isoformat(), "orders_saved": True})
+        conn.commit()
+    return results
+
+
+@router.post("/{platform}/import")
+def platform_import(platform: str, store_name: str = Form(...), import_date: date = Form(...), promo_file: UploadFile = File(None), order_file: UploadFile = File(None), user: dict = Depends(_require_user)):
+    _check(platform)
+    from v2.v1_compat import _v1_authorize_store, _actor_name
+    _v1_authorize_store(user, store_name)
+    order_bytes = order_file.file.read() if order_file else None
+    promo_bytes = promo_file.file.read() if promo_file else None
+    order_filename = order_file.filename or "" if order_file else ""
+    promo_filename = promo_file.filename or "" if promo_file else ""
+    try:
+        results = _import_platform_files(platform, store_name, import_date, order_bytes, order_filename, promo_bytes, promo_filename, _actor_name(user))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"platform": platform, "store_name": store_name, "import_date": import_date.isoformat(), "results": results}
