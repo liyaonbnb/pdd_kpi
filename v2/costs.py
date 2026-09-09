@@ -14,7 +14,7 @@ from decimal import Decimal
 from typing import Any
 
 import psycopg
-from fastapi import APIRouter, Depends, Header, HTTPException, File, UploadFile
+from fastapi import APIRouter, Depends, Header, HTTPException, File, UploadFile, Form
 from pydantic import BaseModel, Field
 from fastapi.responses import PlainTextResponse
 
@@ -356,3 +356,23 @@ async def import_global_costs(file: UploadFile = File(...), user: dict[str, Any]
         raise HTTPException(status_code=400, detail="CSV 缺少有效成本记录")
     result = save_global_costs(SaveGlobalCostsRequest(costs=records), user)
     return {"updated": int(result.get("updated", 0))}
+
+# Legacy V1 cost paths remain available while the frontend is being cut over.
+@router.get("")
+def list_legacy_costs(store_name: str | None = None, user: dict[str, Any] = Depends(_require_costs_user)) -> list[dict[str, Any]]:
+    return list_global_costs(user)
+
+@router.post("")
+def save_legacy_costs(req: dict[str, Any], user: dict[str, Any] = Depends(_require_costs_user)) -> dict[str, Any]:
+    records = req.get("costs") if isinstance(req, dict) else None
+    if not isinstance(records, list):
+        raise HTTPException(status_code=422, detail="costs 必须是数组")
+    return save_global_costs(SaveGlobalCostsRequest(costs=[CostRecord(**item) for item in records]), user)
+
+@router.get("/export", response_class=PlainTextResponse)
+def export_legacy_costs(store_name: str | None = None, user: dict[str, Any] = Depends(_require_costs_user)) -> str:
+    return export_global_costs(False, user)
+
+@router.post("/import")
+async def import_legacy_costs(store_name: str | None = Form(None), file: UploadFile = File(...), user: dict[str, Any] = Depends(_require_costs_user)) -> dict[str, int]:
+    return await import_global_costs(file, user)

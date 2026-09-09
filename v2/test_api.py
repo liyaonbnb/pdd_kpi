@@ -598,6 +598,7 @@ def _require_user_token(x_v2_test_token: str | None, authorization: str | None) 
     return claims
 
 
+@app.get("/api/health")
 @app.get("/health")
 def health() -> dict[str, Any]:
     try:

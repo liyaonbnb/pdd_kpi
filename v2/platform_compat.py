@@ -90,6 +90,14 @@ def analysis(platform: str, store_name: str, start_date: date, end_date: date, u
         rows=_row_dict(cur)
     return {"product_metrics":rows,"style_metrics":[],"kpis":{}}
 
+@router.post("/{platform}/costs")
+def save_platform_costs(platform: str, req: dict[str, Any], user: dict = Depends(_require_user)):
+    _check(platform)
+    from v2.costs import save_global_costs, SaveGlobalCostsRequest, CostRecord
+    records = req.get("costs")
+    if not isinstance(records, list):
+        raise HTTPException(status_code=422, detail="costs 必须是数组")
+    return save_global_costs(SaveGlobalCostsRequest(costs=[CostRecord(**item) for item in records]), user)
 @router.get("/{platform}/costs")
 def costs(platform: str, user: dict=Depends(_require_user)):
     _check(platform)
