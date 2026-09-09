@@ -1,0 +1,14 @@
+[Unit]
+Description=PDD KPI Dashboard V2 API
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/pdd_kpi
+Environment=V2_DATABASE_URL=postgresql://pdd_v2_test:pdd_v2_test_local_2026@127.0.0.1:5432/pdd_v2_test
+ExecStart=/home/ubuntu/pdd_kpi/venv/bin/uvicorn --app-dir /home/ubuntu/pdd_kpi v2.test_api:app --host 0.0.0.0 --port 18001 --workers 1
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

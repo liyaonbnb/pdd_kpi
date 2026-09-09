@@ -33,3 +33,8 @@ jobs:
             sudo chmod -R 755 /var/www/pdd_kpi
             sudo systemctl restart pdd_kpi
             sudo systemctl reload nginx
+            sudo cp deploy/v2-prod/pdd-v2.service /etc/systemd/system/pdd-v2.service
+            sudo cp deploy/v2-prod/pdd-v2-web.service /etc/systemd/system/pdd-v2-web.service
+            sudo systemctl daemon-reload
+            sudo systemctl enable pdd-v2.service pdd-v2-web.service
+            sudo systemctl restart pdd-v2.service pdd-v2-web.service
