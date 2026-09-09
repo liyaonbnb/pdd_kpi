@@ -45,13 +45,10 @@ def _build_report(report_date: date) -> dict[str, Any]:
 
 @router.get("/schedule-status")
 def schedule_status(user: dict = Depends(_require_user)):
-    try:
-        from daily_wecom_job import get_daily_wecom_schedule_status
-        status = get_daily_wecom_schedule_status()
-        status["source"] = "v2"
-        return status
-    except Exception:
-        return {"enabled": False, "schedule": "30 10 * * *", "schedule_time": "10:30", "source": "v2", "message": "任务状态暂不可读"}
+    from v2.daily_wecom_job import get_schedule_status
+    status = get_schedule_status()
+    status["source"] = "v2"
+    return status
 @router.get("/daily/preview")
 def preview(report_date: date | None = None, user: dict = Depends(_require_user)):
     return _build_report(report_date or (date.today()-timedelta(days=1)))
