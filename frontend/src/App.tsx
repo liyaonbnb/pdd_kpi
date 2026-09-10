@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react"
-import { BrowserRouter, Routes, Route, NavLink, useLocation, useNavigate } from "react-router-dom"
+import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation, useNavigate } from "react-router-dom"
 import {
   LayoutDashboard,
   Store,
@@ -52,7 +52,6 @@ const StoresPage = lazy(async () => ({ default: (await import("@/pages/stores"))
 const ImportPage = lazy(async () => ({ default: (await import("@/pages/import")).ImportPage }))
 const MetricsPage = lazy(async () => ({ default: (await import("@/pages/metrics")).MetricsPage }))
 const OrdersPage = lazy(async () => ({ default: (await import("@/pages/orders")).OrdersPage }))
-const CostsPage = lazy(async () => ({ default: (await import("@/pages/costs")).CostsPage }))
 const AiWecomPage = lazy(async () => ({ default: (await import("@/pages/ai-wecom")).AiWecomPage }))
 const UsersPage = lazy(async () => ({ default: (await import("@/pages/users")).UsersPage }))
 const DouyinDashboardPage = lazy(async () => ({ default: (await import("@/pages/douyin-dashboard")).DouyinDashboardPage }))
@@ -562,7 +561,7 @@ function Layout() {
             <Route path="/import" element={<ImportPage />} />
             <Route path="/metrics" element={<MetricsPage />} />
             <Route path="/orders" element={<OrdersPage />} />
-            <Route path="/costs" element={<CostsPage />} />
+            <Route path="/costs" element={<Navigate to="/v2?module=bundle-costs" replace />} />
             <Route path="/knowledge" element={<KnowledgeAssistantPage />} />
             <Route path="/ai-wecom" element={<AiWecomPage />} />
             <Route path="/users" element={<UsersPage />} />

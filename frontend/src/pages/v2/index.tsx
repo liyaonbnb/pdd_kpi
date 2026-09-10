@@ -24,7 +24,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { canAccessPage, isMaster } from "@/api/auth"
-import { Link } from "react-router-dom"
+import { Link, useSearchParams } from "react-router-dom"
 import { OverviewModule } from "./modules/overview"
 import { BalancesModule } from "./modules/balances"
 import { LedgerSummaryModule } from "./modules/ledger-summary"
@@ -106,7 +106,9 @@ const NAV: GroupDef[] = [
 ]
 
 export function V2WorkbenchPage() {
-  const [active, setActive] = useState("overview")
+  const [searchParams] = useSearchParams()
+  const initialModule = searchParams.get("module") || "overview"
+  const [active, setActive] = useState(initialModule)
   const current = useMemo(() => NAV.flatMap((g) => g.items).find((m) => m.id === active) ?? NAV[0].items[0], [active])
   const Current = current.component
 
