@@ -8,10 +8,12 @@ Usage:
 """
 import sys, os, glob, shutil, subprocess, time
 
-SITE = "/etc/nginx/sites-enabled/pdd-kpi"
-BACKUP_DIR = "/etc/nginx/backups"
-V1 = "http://127.0.0.1:8000"
-V2 = "http://127.0.0.1:18001"
+SITE = os.getenv("NGINX_CUTOVER_SITE", "/etc/nginx/sites-enabled/pdd-kpi")
+BACKUP_DIR = os.getenv("NGINX_CUTOVER_BACKUP_DIR", "/etc/nginx/backups")
+V1_PORT = os.getenv("NGINX_CUTOVER_V1_PORT", "8000")
+V2_PORT = os.getenv("NGINX_CUTOVER_V2_PORT", "18001")
+V1 = "http://127.0.0.1:" + V1_PORT
+V2 = "http://127.0.0.1:" + V2_PORT
 
 def run(cmd, check=True):
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
@@ -25,9 +27,9 @@ def current_target():
         return None
     with open(SITE) as f:
         text = f.read()
-    if "127.0.0.1:18001" in text:
+    if ("127.0.0.1:" + V2_PORT) in text:
         return "v2"
-    if "127.0.0.1:8000" in text:
+    if ("127.0.0.1:" + V1_PORT) in text:
         return "v1"
     return "unknown"
 
@@ -41,7 +43,7 @@ def apply(text):
     run("systemctl reload nginx")
     # smoke test: V2 must be up after switch
     time.sleep(2)
-    r = run("curl -fsS http://127.0.0.1:18001/health || true", check=False)
+    r = run("curl -fsS http://127.0.0.1:" + V2_PORT + "/health || true", check=False)
     if "ok" not in r.stdout:
         sys.stderr.write("WARNING: V2 health check did not return ok after switch\n")
         return 2
@@ -57,9 +59,9 @@ def do_switch():
     backup = os.path.join(BACKUP_DIR, "pdd-kpi.v1-%s.bak" % ts)
     with open(backup, "w") as f:
         f.write(orig)
-    new = orig.replace("proxy_pass http://127.0.0.1:8000;", "proxy_pass http://127.0.0.1:18001;")
+    new = orig.replace("proxy_pass http://127.0.0.1:" + V1_PORT + ";", "proxy_pass http://127.0.0.1:" + V2_PORT + ";")
     if new == orig:
-        sys.exit("already switched to V2 (no 127.0.0.1:8000 proxy_pass found)")
+        sys.exit("already switched to V2 (no proxy_pass to V1 found in site config)")
     run("cp %s %s" % (SITE, backup + ".2"))
     rc = apply(new)
     print("SWITCHED /api -> V2(18001); backup=%s" % backup)
