@@ -991,6 +991,60 @@ def create_item(payload: ItemIn, x_v2_test_token: str | None = Header(default=No
     return result
 
 
+class ItemUpdateIn(BaseModel):
+    name: str | None = None
+    base_unit: str | None = None
+    category: str | None = None
+    safety_stock: Decimal | None = Field(default=None, ge=0)
+
+@app.patch("/api/v2/items/{item_code}")
+def update_item(item_code: str, payload: ItemUpdateIn, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
+    fields = [("name", payload.name), ("base_unit", payload.base_unit), ("category", payload.category), ("safety_stock", payload.safety_stock)]
+    fields = [(name, value) for name, value in fields if value is not None]
+    if not fields: raise HTTPException(status_code=400, detail="没有要更新的字段")
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+        cur.execute("select id from inventory_items where code=%s and is_active=true", (item_code,))
+        if not cur.fetchone(): raise HTTPException(status_code=404, detail="单品不存在")
+        cur.execute("update inventory_items set " + ",".join(f"{name}=%s" for name, _ in fields) + ",updated_at=now() where code=%s", [value for _, value in fields] + [item_code])
+        conn.commit()
+    return {"code": item_code, "status": "updated"}
+
+@app.delete("/api/v2/items/{item_code}")
+def delete_item(item_code: str, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+        cur.execute("update inventory_items set is_active=false,updated_at=now() where code=%s and is_active=true returning code", (item_code,))
+        if not cur.fetchone(): raise HTTPException(status_code=404, detail="单品不存在或已停用")
+        conn.commit()
+    return {"code": item_code, "status": "deactivated"}
+
+
+class ItemCostVersionIn(BaseModel):
+    unit_cost: Decimal = Field(ge=0)
+    effective_from: str
+    warehouse_code: str | None = None
+
+@app.post("/api/v2/items/{item_code}/cost-versions")
+def create_item_cost_version(item_code: str, payload: ItemCostVersionIn, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+        cur.execute("select id from inventory_items where code=%s and is_active=true", (item_code,))
+        item = cur.fetchone()
+        if not item: raise HTTPException(status_code=404, detail="单品不存在")
+        if payload.warehouse_code:
+            cur.execute("select id from warehouses where code=upper(%s) or name=%s", (payload.warehouse_code, payload.warehouse_code))
+        else:
+            cur.execute("select id from warehouses order by code limit 1")
+        warehouse = cur.fetchone()
+        if not warehouse: raise HTTPException(status_code=409, detail="没有可用仓库")
+        cur.execute("update item_cost_versions set effective_to=%s where item_id=%s and warehouse_id=%s and effective_to is null and effective_from < %s", (payload.effective_from, item[0], warehouse[0], payload.effective_from))
+        cur.execute("insert into item_cost_versions(item_id,warehouse_id,unit_cost,effective_from,source_type,source_id) values(%s,%s,%s,%s,'manual',%s) returning id", (item[0],warehouse[0],payload.unit_cost,payload.effective_from,'manual:'+item_code))
+        version_id=cur.fetchone()[0]
+        conn.commit()
+    return {"id": str(version_id), "item_code": item_code, "unit_cost": payload.unit_cost, "effective_from": payload.effective_from}
+
+
 @app.get("/api/v2/bundles")
 def list_bundles() -> list[dict[str, Any]]:
     with psycopg.connect(DATABASE_URL) as conn:
@@ -1048,6 +1102,16 @@ def update_bundle(bundle_code: str, payload: BundleUpdateIn, x_v2_test_token: st
                 raise HTTPException(status_code=404, detail=f"组合不存在：{bundle_code}")
         conn.commit()
     return {"code": bundle_code, "status": "updated"}
+
+
+@app.delete("/api/v2/bundles/{bundle_code}")
+def delete_bundle(bundle_code: str, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+        cur.execute("update bundles set is_active=false,updated_at=now() where code=%s and is_active=true returning code", (bundle_code,))
+        if not cur.fetchone(): raise HTTPException(status_code=404, detail="组合不存在或已停用")
+        conn.commit()
+    return {"code": bundle_code, "status": "deactivated"}
 
 
 @app.get("/api/v2/listings")

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react"
+import { Pencil, Trash2 } from "lucide-react"
 import { PageHeader, FilterBar, FilterItem, EmptyState } from "@/components/page-kit"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import { ReportTable, type ReportColumn } from "@/pages/v2/components/report-table"
 import { request, fmtQty, fmtMoney } from "@/pages/v2/api"
 
@@ -97,6 +99,28 @@ export function BundleCostsModule() {
     )
   }, [costs, keyword])
 
+  const maintainBundle = async (row: BundleCost) => {
+    const bundle = bundleMap.get(row.bundle_code)
+    if (!bundle) return
+    const name = window.prompt("组合名称", bundle.name)
+    if (name === null || !name.trim()) return
+    const feeText = window.prompt("预估快递费", String(bundle.estimated_shipping_fee ?? row.estimated_shipping_fee ?? 0))
+    if (feeText === null) return
+    const fee = Number(feeText)
+    if (!Number.isFinite(fee) || fee < 0) { alert("快递费必须是非负数字"); return }
+    try {
+      await request(`/api/v2/bundles/${encodeURIComponent(row.bundle_code)}`, { method: "PATCH", body: JSON.stringify({ name: name.trim(), estimated_shipping_fee: fee }) })
+      setBundles((current) => current?.map((item) => item.code === row.bundle_code ? { ...item, name: name.trim(), estimated_shipping_fee: fee } : item) ?? null)
+      setCosts((current) => current?.map((item) => item.bundle_code === row.bundle_code ? { ...item, bundle_name: name.trim(), estimated_shipping_fee: fee } : item) ?? null)
+    } catch (e: any) { alert(e?.message || "保存失败") }
+  }
+
+  const deactivateBundle = async (row: BundleCost) => {
+    if (!window.confirm(`确定停用组合「${row.bundle_code}」吗？历史订单不会删除。`)) return
+    try { await request(`/api/v2/bundles/${encodeURIComponent(row.bundle_code)}`, { method: "DELETE" }); setCosts((current) => current?.filter((item) => item.bundle_code !== row.bundle_code) ?? null); setBundles((current) => current?.filter((item) => item.code !== row.bundle_code) ?? null) }
+    catch (e: any) { alert(e?.message || "停用失败") }
+  }
+
   const columns: ReportColumn<BundleCost>[] = [
     { key: "bundle_code", label: "组合编码" },
     { key: "bundle_name", label: "组合名称" },
@@ -119,6 +143,7 @@ export function BundleCostsModule() {
       align: "center",
       render: (row) => bundleMap.get(row.bundle_code)?.version_no ?? "—",
     },
+    { key: "_actions", label: "操作", align: "center", render: (row) => <div className="flex justify-center gap-1"><Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); void maintainBundle(row) }}><Pencil className="h-3.5 w-3.5" />编辑</Button><Button variant="ghost" size="sm" className="text-destructive" onClick={(e) => { e.stopPropagation(); void deactivateBundle(row) }}><Trash2 className="h-3.5 w-3.5" />停用</Button></div> },
   ]
 
   const selectedBundle = selected ? bundleMap.get(selected) : undefined

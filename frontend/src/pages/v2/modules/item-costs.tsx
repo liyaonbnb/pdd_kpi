@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react"
+import { Pencil, Trash2 } from "lucide-react"
 import { PageHeader, FilterBar, FilterItem, EmptyState } from "@/components/page-kit"
 import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ReportTable, type ReportColumn } from "@/pages/v2/components/report-table"
@@ -109,6 +111,27 @@ export function ItemCostsModule() {
       .finally(() => setVersionsLoading(false))
   }
 
+  const maintainItem = async (item: Item) => {
+    const name = window.prompt("单品名称", item.name)
+    if (name === null || !name.trim()) return
+    const cost = window.prompt("当前成本（可选，仅用于记录新的成本版本）", "")
+    try {
+      await request(`/api/v2/items/${encodeURIComponent(item.code)}`, { method: "PATCH", body: JSON.stringify({ name: name.trim() }) })
+      if (cost !== null && cost.trim() !== "") {
+        const value = Number(cost)
+        if (!Number.isFinite(value) || value < 0) throw new Error("成本必须是非负数字")
+        await request(`/api/v2/items/${encodeURIComponent(item.code)}/cost-versions`, { method: "POST", body: JSON.stringify({ unit_cost: value, effective_from: new Date().toISOString().slice(0, 10) }) })
+      }
+      setItems((current) => current?.map((row) => row.code === item.code ? { ...row, name: name.trim() } : row) ?? null)
+    } catch (e: any) { alert(e?.message || "保存失败") }
+  }
+
+  const deactivateItem = async (item: Item) => {
+    if (!window.confirm(`确定停用单品「${item.code}」吗？历史订单不会删除。`)) return
+    try { await request(`/api/v2/items/${encodeURIComponent(item.code)}`, { method: "DELETE" }); setItems((current) => current?.filter((row) => row.code !== item.code) ?? null) }
+    catch (e: any) { alert(e?.message || "停用失败") }
+  }
+
   const columns: ReportColumn<Item>[] = [
     { key: "code", label: "单品编码" },
     { key: "name", label: "名称" },
@@ -136,6 +159,7 @@ export function ItemCostsModule() {
       render: (item) => fmtMoney(balanceMap.get(item.code)?.amount ?? 0),
     },
     { key: "safety_stock", label: "安全库存", align: "right", render: (item) => fmtQty(item.safety_stock) },
+    { key: "_actions", label: "操作", align: "center", render: (item) => <div className="flex justify-center gap-1"><Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); void maintainItem(item) }}><Pencil className="h-3.5 w-3.5" />编辑</Button><Button variant="ghost" size="sm" className="text-destructive" onClick={(e) => { e.stopPropagation(); void deactivateItem(item) }}><Trash2 className="h-3.5 w-3.5" />停用</Button></div> },
   ]
 
   const versionColumns: ReportColumn<CostVersion>[] = [
