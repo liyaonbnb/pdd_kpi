@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { PageHeader, StatCard } from "@/components/page-kit"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { ReportTable, type ReportColumn } from "@/pages/v2/components/report-table"
@@ -115,7 +114,8 @@ export function UnmappedModule() {
     { key: "store_name", label: "店铺" },
     { key: "product_id", label: "商品ID" },
     { key: "product_name", label: "商品名称", render: (row) => row.product_name || "—" },
-    { key: "style_id", label: "规格ID", render: (row) => row.style_id || "—" },
+    { key: "style_id", label: "规格编码", render: (row) => row.style_id || "—" },
+    { key: "style_name", label: "规格名称", render: (row) => row.style_name || "—" },
     { key: "order_count", label: "订单数", align: "right", render: (row) => fmtQty(row.order_count) },
     { key: "first_date", label: "首次出现日期", render: (row) => fmtDate(row.first_date) },
     {
@@ -180,12 +180,10 @@ export function UnmappedModule() {
             )}
             <label className="block text-xs text-muted-foreground">
               <span className="mb-1 block">目标组合编码</span>
-              <Input
-                value={bundleCode}
-                onChange={(e) => setBundleCode(e.target.value)}
-                placeholder="输入组合编码，如 BUNDLE-001"
-                autoFocus
-              />
+              <Select value={bundleCode} onChange={(e) => setBundleCode(e.target.value)} autoFocus>
+                <option value="">请选择组合 BOM</option>
+                {bundles.map((bundle) => <option key={bundle.code} value={bundle.code}>{bundle.code} · {bundle.name}</option>)}
+              </Select>
             </label>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setMapping(null)} disabled={submitting}>
