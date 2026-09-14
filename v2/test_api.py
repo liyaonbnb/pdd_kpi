@@ -969,6 +969,36 @@ def set_inventory_date(payload: dict[str, str], x_v2_test_token: str | None = He
     return config()
 
 
+@app.get("/api/v2/items/costs/export")
+def export_item_costs(x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> Response:
+    _require_user_token(x_v2_test_token, authorization)
+    import csv
+    out=io.StringIO(); w=csv.writer(out); w.writerow(["单品编码","单品名称","仓库编码","单位成本","生效日期"])
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+        cur.execute("select i.code,i.name,w.code,v.unit_cost,v.effective_from from item_cost_versions v join inventory_items i on i.id=v.item_id join warehouses w on w.id=v.warehouse_id where i.is_active=true and v.effective_to is null order by i.code,w.code")
+        w.writerows(cur.fetchall())
+    return Response(content="\ufeff"+out.getvalue(), media_type="text/csv", headers={"Content-Disposition":"attachment; filename=item_costs.csv"})
+
+@app.post("/api/v2/items/costs/import")
+async def import_item_costs(file: UploadFile = File(...), x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, int]:
+    _require_user_token(x_v2_test_token, authorization)
+    import csv
+    text=(await file.read()).decode("utf-8-sig")
+    rows=list(csv.DictReader(io.StringIO(text))); saved=0
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+        for row in rows:
+            code=(row.get("单品编码") or row.get("item_code") or row.get("code") or "").strip(); cost=row.get("单位成本") or row.get("unit_cost") or ""; effective=row.get("生效日期") or row.get("effective_from") or str(date.today()); warehouse=(row.get("仓库编码") or row.get("warehouse_code") or "").strip()
+            if not code: continue
+            try: value=Decimal(cost)
+            except Exception: raise HTTPException(status_code=400, detail=f"单品 {code} 成本无效")
+            cur.execute("select id from inventory_items where code=%s and is_active=true",(code,)); item=cur.fetchone(); cur.execute("select id from warehouses where (%s='' or code=%s or name=%s) order by code limit 1",(warehouse,warehouse,warehouse)); wh=cur.fetchone()
+            if not item or not wh: raise HTTPException(status_code=400, detail=f"单品或仓库不存在：{code}/{warehouse}")
+            cur.execute("update item_cost_versions set effective_to=%s where item_id=%s and warehouse_id=%s and effective_to is null and effective_from < %s",(effective,item[0],wh[0],effective))
+            cur.execute("insert into item_cost_versions(item_id,warehouse_id,unit_cost,effective_from,source_type,source_id) values(%s,%s,%s,%s,'csv_import',%s)",(item[0],wh[0],value,effective,file.filename or 'item_costs.csv')); saved+=1
+        conn.commit()
+    return {"saved":saved}
+
+
 @app.get("/api/v2/items")
 def list_items() -> list[dict[str, Any]]:
     with psycopg.connect(DATABASE_URL) as conn:

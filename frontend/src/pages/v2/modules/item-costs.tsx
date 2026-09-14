@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { Pencil, Trash2 } from "lucide-react"
+import { Pencil, Trash2, Download, Upload } from "lucide-react"
 import { PageHeader, FilterBar, FilterItem, EmptyState } from "@/components/page-kit"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -7,7 +7,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ReportTable, type ReportColumn } from "@/pages/v2/components/report-table"
 import { StatusBadge } from "@/pages/v2/components/status-badge"
-import { request, fmtQty, fmtMoney, fmtDate } from "@/pages/v2/api"
+import { request, uploadFile, downloadFile, fmtQty, fmtMoney, fmtDate } from "@/pages/v2/api"
 
 interface Item {
   code: string
@@ -176,6 +176,7 @@ export function ItemCostsModule() {
       <PageHeader
         title="单品成本"
         description="移动加权平均 =（期初金额+Σ入库金额）/（期初数量+Σ入库数量），出库不改均价"
+        actions={<div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => void downloadFile("/api/v2/items/costs/export", "单品成本.csv")}><Download className="h-4 w-4" />导出 CSV</Button><label><span className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm font-medium hover:bg-muted"><Upload className="h-4 w-4" />导入 CSV</span><input type="file" accept=".csv" className="hidden" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; try { const r = await uploadFile<{ saved: number }>("/api/v2/items/costs/import", {}, file); alert(`已导入 ${r.saved} 条成本`); window.location.reload() } catch (err: any) { alert(err?.message || "导入失败") } e.target.value = "" }} /></label></div>}
       />
 
       {error && (

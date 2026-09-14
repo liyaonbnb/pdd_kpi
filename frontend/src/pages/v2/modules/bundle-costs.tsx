@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react"
-import { Pencil, Trash2 } from "lucide-react"
+import { Pencil, Trash2, Download, Upload } from "lucide-react"
 import { PageHeader, FilterBar, FilterItem, EmptyState } from "@/components/page-kit"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { ReportTable, type ReportColumn } from "@/pages/v2/components/report-table"
-import { request, fmtQty, fmtMoney } from "@/pages/v2/api"
+import { request, uploadFile, downloadFile, fmtQty, fmtMoney } from "@/pages/v2/api"
 
 interface BundleCost {
   bundle_code: string
@@ -178,6 +178,7 @@ export function BundleCostsModule() {
       <PageHeader
         title="组合成本"
         description="产品成本 = Σ 组件用量 × 库存加权均价（无库存回退最新成本版本）"
+        actions={<div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => void downloadFile("/api/costs/global/export", "组合成本.csv")}><Download className="h-4 w-4" />导出 CSV</Button><label><span className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm font-medium hover:bg-muted"><Upload className="h-4 w-4" />导入 CSV</span><input type="file" accept=".csv" className="hidden" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; try { const r = await uploadFile<{ updated: number }>("/api/costs/global/import", {}, file); alert(`已导入 ${r.updated} 条组合成本`); window.location.reload() } catch (err: any) { alert(err?.message || "导入失败") } e.target.value = "" }} /></label></div>}
       />
 
       {error && (
