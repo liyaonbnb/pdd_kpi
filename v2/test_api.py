@@ -1045,6 +1045,18 @@ def create_item_cost_version(item_code: str, payload: ItemCostVersionIn, x_v2_te
     return {"id": str(version_id), "item_code": item_code, "unit_cost": payload.unit_cost, "effective_from": payload.effective_from}
 
 
+class BulkCodesIn(BaseModel):
+    codes: list[str] = Field(min_length=1)
+
+@app.post("/api/v2/items/bulk-deactivate")
+def bulk_deactivate_items(payload: BulkCodesIn, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+        cur.execute("update inventory_items set is_active=false,updated_at=now() where code=any(%s) and is_active=true", (payload.codes,))
+        changed=cur.rowcount; conn.commit()
+    return {"deactivated": changed}
+
+
 @app.get("/api/v2/bundles")
 def list_bundles() -> list[dict[str, Any]]:
     with psycopg.connect(DATABASE_URL) as conn:
@@ -1130,6 +1142,15 @@ def bulk_create_listings(payload: BulkListingMappingIn, x_v2_test_token: str | N
             created += 1
         conn.commit()
     return {"created": created}
+
+
+@app.post("/api/v2/bundles/bulk-deactivate")
+def bulk_deactivate_bundles(payload: BulkCodesIn, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+        cur.execute("update bundles set is_active=false,updated_at=now() where code=any(%s) and is_active=true", (payload.codes,))
+        changed=cur.rowcount; conn.commit()
+    return {"deactivated": changed}
 
 
 @app.get("/api/v2/listings")

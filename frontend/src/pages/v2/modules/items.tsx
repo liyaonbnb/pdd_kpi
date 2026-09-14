@@ -29,6 +29,7 @@ export function ItemsModule() {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
+  const [selectedCodes, setSelectedCodes] = useState<string[]>([])
 
   const load = () => {
     setLoading(true)
@@ -67,7 +68,14 @@ export function ItemsModule() {
     }
   }
 
+  const toggleCode = (code: string) => setSelectedCodes((current) => current.includes(code) ? current.filter((item) => item !== code) : [...current, code])
+  const bulkDeactivate = async () => {
+    if (!selectedCodes.length || !window.confirm(`确定停用选中的 ${selectedCodes.length} 个单品吗？历史数据不会删除。`)) return
+    try { await request("/api/v2/items/bulk-deactivate", { method: "POST", body: JSON.stringify({ codes: selectedCodes }) }); setRows((current) => current.filter((row) => !selectedCodes.includes(row.code))); setSelectedCodes([]) } catch (e: any) { alert(e?.message || "批量停用失败") }
+  }
+
   const columns: ReportColumn<ItemRow>[] = [
+    { key: "_select", label: "选择", align: "center", render: (r) => <input type="checkbox" checked={selectedCodes.includes(r.code)} onChange={() => toggleCode(r.code)} onClick={(e) => e.stopPropagation()} aria-label={`选择 ${r.code}`} /> },
     { key: "code", label: "编码" },
     { key: "name", label: "名称" },
     { key: "base_unit", label: "单位" },
@@ -86,11 +94,10 @@ export function ItemsModule() {
       <PageHeader
         title="单品档案"
         description="库存单品主数据：编码、单位、分类与安全库存"
-        actions={
-          <Button size="sm" onClick={() => setOpen(true)}>
+        actions={<div className="flex gap-2"><Button variant="destructive" size="sm" disabled={!selectedCodes.length} onClick={() => void bulkDeactivate()}>批量停用（{selectedCodes.length}）</Button><Button size="sm" onClick={() => setOpen(true)}>
             <Plus className="h-4 w-4" />
             新建单品
-          </Button>
+          </Button></div>
         }
       />
       {error && <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-sm text-destructive">{error}</div>}

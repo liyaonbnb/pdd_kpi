@@ -45,6 +45,7 @@ export function BundlesModule() {
   const [editing, setEditing] = useState<BundleRow | null>(null)
   const [editForm, setEditForm] = useState({ name: "", estimated_shipping_fee: "" })
   const [editSaving, setEditSaving] = useState(false)
+  const [selectedCodes, setSelectedCodes] = useState<string[]>([])
 
   const load = () => {
     setLoading(true)
@@ -124,7 +125,14 @@ export function BundlesModule() {
     }
   }
 
+  const toggleCode = (code: string) => setSelectedCodes((current) => current.includes(code) ? current.filter((item) => item !== code) : [...current, code])
+  const bulkDeactivate = async () => {
+    if (!selectedCodes.length || !window.confirm(`确定停用选中的 ${selectedCodes.length} 个组合吗？历史数据不会删除。`)) return
+    try { await request("/api/v2/bundles/bulk-deactivate", { method: "POST", body: JSON.stringify({ codes: selectedCodes }) }); setRows((current) => current.filter((row) => !selectedCodes.includes(row.code))); setSelectedCodes([]) } catch (e: any) { alert(e?.message || "批量停用失败") }
+  }
+
   const columns: ReportColumn<BundleRow>[] = [
+    { key: "_select", label: "选择", align: "center", render: (r) => <input type="checkbox" checked={selectedCodes.includes(r.code)} onChange={() => toggleCode(r.code)} onClick={(e) => e.stopPropagation()} aria-label={`选择 ${r.code}`} /> },
     { key: "code", label: "组合编码" },
     { key: "name", label: "名称" },
     { key: "estimated_shipping_fee", label: "预估快递费", align: "right", render: (r) => fmtMoney(r.estimated_shipping_fee) },
@@ -162,11 +170,10 @@ export function BundlesModule() {
       <PageHeader
         title="组合 BOM"
         description="同编码重复导入会自动产生新 BOM 版本，旧版本退休"
-        actions={
-          <Button size="sm" onClick={() => setOpen(true)}>
+        actions={<div className="flex gap-2"><Button variant="destructive" size="sm" disabled={!selectedCodes.length} onClick={() => void bulkDeactivate()}>批量停用（{selectedCodes.length}）</Button><Button size="sm" onClick={() => setOpen(true)}>
             <Plus className="h-4 w-4" />
             新建组合
-          </Button>
+          </Button></div>
         }
       />
       {error && <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-sm text-destructive">{error}</div>}
