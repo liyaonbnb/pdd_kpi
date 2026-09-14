@@ -1114,6 +1114,24 @@ def delete_bundle(bundle_code: str, x_v2_test_token: str | None = Header(default
     return {"code": bundle_code, "status": "deactivated"}
 
 
+class BulkListingMappingIn(BaseModel):
+    mappings: list[ListingMappingIn] = Field(min_length=1)
+
+@app.post("/api/v2/listings/bulk")
+def bulk_create_listings(payload: BulkListingMappingIn, x_v2_test_token: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_user_token(x_v2_test_token, authorization)
+    created = 0
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+        for mapping in payload.mappings:
+            cur.execute("select id from bundles where code=%s and is_active=true", (mapping.bundle_code,))
+            bundle = cur.fetchone()
+            if not bundle: raise HTTPException(status_code=400, detail=f"组合不存在：{mapping.bundle_code}")
+            cur.execute("insert into platform_listing_mappings(platform,store_name,product_id,style_id,bundle_id,effective_from) values(%s,%s,%s,%s,%s,%s) on conflict(platform,store_name,product_id,style_id,effective_from) do update set bundle_id=excluded.bundle_id", (mapping.platform,mapping.store_name,mapping.product_id,mapping.style_id,bundle[0],mapping.effective_from))
+            created += 1
+        conn.commit()
+    return {"created": created}
+
+
 @app.get("/api/v2/listings")
 def list_listings() -> list[dict[str, Any]]:
     with psycopg.connect(DATABASE_URL) as conn:

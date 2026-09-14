@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 import { PageHeader, StatCard } from "@/components/page-kit"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { ReportTable, type ReportColumn } from "@/pages/v2/components/report-table"
 import { request, fmtQty, fmtDate } from "@/pages/v2/api"
@@ -32,6 +33,9 @@ export function UnmappedModule() {
   const [bundleCode, setBundleCode] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [dialogError, setDialogError] = useState("")
+  const [bundles, setBundles] = useState<{ code: string; name: string }[]>([])
+  const [choices, setChoices] = useState<Record<string, string>>({})
+  const [bulkSaving, setBulkSaving] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -46,6 +50,7 @@ export function UnmappedModule() {
 
   useEffect(() => {
     load()
+    request<{ code: string; name: string }[]>("/api/v2/bundles").then((list) => setBundles(list.filter((b) => b))).catch(() => undefined)
   }, [load])
 
   const openDialog = (row: UnmappedRow) => {
@@ -85,6 +90,26 @@ export function UnmappedModule() {
     }
   }
 
+  const rowKey = (row: UnmappedRow) => `${row.platform}|${row.store_name}|${row.product_id}|${row.style_id ?? ""}`
+  const recommended = (row: UnmappedRow) => {
+    const text = `${row.product_id} ${row.product_name || ""}`.toLowerCase()
+    return bundles.find((bundle) => text.includes(bundle.code.toLowerCase()) || text.includes(bundle.name.toLowerCase()))?.code || ""
+  }
+  const setChoice = (row: UnmappedRow, code: string) => setChoices((current) => ({ ...current, [rowKey(row)]: code }))
+  const applyRecommendations = () => {
+    const next = { ...choices }
+    for (const row of data?.rows || []) if (!next[rowKey(row)]) next[rowKey(row)] = recommended(row)
+    setChoices(next)
+  }
+  const saveBulk = async () => {
+    const mappings = (data?.rows || []).filter((row) => choices[rowKey(row)]).map((row) => ({ platform: row.platform, store_name: row.store_name, product_id: row.product_id, style_id: row.style_id, bundle_code: choices[rowKey(row)], effective_from: new Date().toISOString().slice(0, 10) }))
+    if (!mappings.length) { alert("请先为至少一条商品选择组合"); return }
+    setBulkSaving(true)
+    try { await request("/api/v2/listings/bulk", { method: "POST", body: JSON.stringify({ mappings }) }); setNotice(`已批量保存 ${mappings.length} 条映射`); setChoices({}); load() }
+    catch (err) { alert(err instanceof Error ? err.message : "批量保存失败") }
+    finally { setBulkSaving(false) }
+  }
+
   const columns: ReportColumn<UnmappedRow>[] = [
     { key: "platform", label: "平台" },
     { key: "store_name", label: "店铺" },
@@ -98,9 +123,7 @@ export function UnmappedModule() {
       label: "操作",
       align: "center",
       render: (row) => (
-        <Button size="sm" variant="outline" onClick={() => openDialog(row)}>
-          映射
-        </Button>
+        <div className="flex items-center justify-center gap-2"><Select className="w-44" value={choices[rowKey(row)] || ""} onChange={(e) => setChoice(row, e.target.value)}><option value="">选择组合</option>{bundles.map((bundle) => <option key={bundle.code} value={bundle.code}>{bundle.code} · {bundle.name}</option>)}</Select><Button size="sm" variant="ghost" onClick={() => openDialog(row)}>手工</Button></div>
       ),
     },
   ]
@@ -109,7 +132,8 @@ export function UnmappedModule() {
     <div>
       <PageHeader
         title="未映射治理"
-        description="订单中出现但尚未映射到组合的链接；未映射订单无法扣减库存与核算成本"
+        description="订单中出现但尚未映射到组合的链接；可自动推荐后批量保存映射"
+        actions={<div className="flex gap-2"><Button variant="outline" size="sm" onClick={applyRecommendations}>自动推荐</Button><Button size="sm" onClick={() => void saveBulk()} disabled={bulkSaving}>{bulkSaving ? "保存中…" : "批量保存映射"}</Button></div>}
       />
 
       {error && (
